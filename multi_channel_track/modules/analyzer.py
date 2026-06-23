@@ -11,19 +11,27 @@ import pandas as pd
 from tqdm import tqdm
 from ultralytics import YOLO
 
+from .obb_track import extract_obb_track_id, track_obb_frame
+from .temporal_hbb import TemporalHBBPipeline
+
 from .config import (
     DEFAULT_KEYFRAMES,
     DEFAULT_SKIP_FRAMES,
     DEFAULT_TIME_WINDOW_SEC,
     DEFAULT_TOTAL_SHRIMP,
     HBB_CONF,
+    HBB_TEMPORAL_FRAMES,
+    HBB_TEMPORAL_STEP_FRAMES,
     ID_MATCH_DISTANCE,
     IMGSZ_HBB,
     IMGSZ_OBB,
+    MALE_LINE_MISSING_GRACE_SECONDS,
     MALE_RATE_THRESHOLD,
     MIN_OBSERVATIONS_PER_SHRIMP,
-    MODEL_HBB_PATH,
+    MODEL_HBB_3FRAME_PATH,
     MODEL_OBB_PATH,
+    OBS_RATE_MIN,
+    VOTE_WINDOW_SECONDS,
 )
 from .id_assigner import FixedIDAssigner
 from .preprocessing import crop_oriented_box
@@ -36,19 +44,48 @@ class ShrimpSexRatioAnalyzer:
     def __init__(self) -> None:
         print("Loading models...")
         self.obb_model = YOLO(MODEL_OBB_PATH)
-        self.hbb_model = YOLO(MODEL_HBB_PATH)
+        self.hbb_model = YOLO(MODEL_HBB_3FRAME_PATH)
         self._preview_crop_refs: dict[int, np.ndarray] = {}
+        self._hbb_temporal_enabled = True
+        self._hbb_temporal_step_frames = HBB_TEMPORAL_STEP_FRAMES
+        self._hbb_temporal_pipeline = TemporalHBBPipeline(HBB_TEMPORAL_STEP_FRAMES)
+
+    @staticmethod
+    def _resolve_capture_source(video_path: str):
+        source = str(video_path).strip()
+        if source.isdigit():
+            return int(source)
+        return video_path
+
+    @staticmethod
+    def _source_name(video_path: str) -> str:
+        source = str(video_path).strip()
+        if source.isdigit():
+            return f"camera_{source}"
+        name = os.path.splitext(os.path.basename(source))[0]
+        return name if name else "stream"
+
+    @staticmethod
+    def _resolve_run_mode(mode: str | None, use_track: bool) -> str:
+        if mode is None:
+            return "track" if use_track else "predict"
+        mode = str(mode).strip().lower()
+        if mode not in {"predict", "track"}:
+            raise ValueError("mode must be 'predict' or 'track'")
+        return mode
 
     def run(
         self,
         video_path: str,
         output_root: str = "outputs",
         total_shrimp: int = DEFAULT_TOTAL_SHRIMP,
+        unknown_total: bool = False,
         auto_total: bool = False,
         auto_total_percentile: float = 90.0,
         auto_total_skip_frames: int | None = None,
         auto_total_max_frames: int | None = None,
         skip_frames: int = DEFAULT_SKIP_FRAMES,
+        max_frames: int | None = None,
         keyframes: int = DEFAULT_KEYFRAMES,
         window_sec: int = DEFAULT_TIME_WINDOW_SEC,
         truth_csv: str | None = None,
@@ -58,20 +95,44 @@ class ShrimpSexRatioAnalyzer:
         preview_only: bool = False,
         preview_scale: float = 0.75,
         preview_wait_ms: int = 1,
+        mode: str | None = None,
+        use_track: bool = False,
+        tracker_config: str | None = None,
+        hbb_temporal_step_frames: int = HBB_TEMPORAL_STEP_FRAMES,
     ) -> dict:
-        cap = cv2.VideoCapture(video_path)
+        run_mode = self._resolve_run_mode(mode, use_track)
+        track_mode = run_mode == "track"
+        capture_source = self._resolve_capture_source(video_path)
+        cap = cv2.VideoCapture(capture_source)
         if not cap.isOpened():
             raise FileNotFoundError(f"無法讀取影片: {video_path}")
 
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
+        video_name = self._source_name(video_path)
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         preview = preview or preview_only
+        self._hbb_temporal_enabled = True
+        self._hbb_temporal_step_frames = max(1, int(hbb_temporal_step_frames))
+        self._hbb_temporal_pipeline.reset(self._hbb_temporal_step_frames)
+        print(
+            f"HBB temporal mode enabled: {HBB_TEMPORAL_FRAMES} frames, "
+            f"step {self._hbb_temporal_step_frames} source frames | model: {MODEL_HBB_3FRAME_PATH}"
+        )
+        self.hbb_model = YOLO(MODEL_HBB_3FRAME_PATH)
+        writer = None if preview_only else ReportWriter(output_root, video_name, run_id)
+        result_video_writer = None
 
         fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        live_source = total_frames <= 0
+        frame_limit = int(max_frames) if max_frames is not None and max_frames > 0 else None
         auto_total_counts: pd.DataFrame | None = None
         auto_total_summary: dict | None = None
+        if unknown_total:
+            total_shrimp = 0
+            auto_total = False
         if auto_total:
+            if live_source:
+                raise ValueError("--auto-total requires a video file with a known frame count. For camera pretests, set --total-shrimp manually.")
             prescan_skip_frames = max(1, int(auto_total_skip_frames or skip_frames))
             auto_total_counts, auto_total_summary = self._estimate_total_shrimp(
                 cap=cap,
@@ -87,15 +148,35 @@ class ShrimpSexRatioAnalyzer:
                 f"{total_shrimp} using P{auto_total_summary['Percentile_Used']:.0f} "
                 f"(median={auto_total_summary['Median_Count']}, max={auto_total_summary['Max_Count']})"
             )
-        assigner = FixedIDAssigner(total_ids=total_shrimp, match_distance=ID_MATCH_DISTANCE)
+        assigner = FixedIDAssigner(
+            total_ids=total_shrimp,
+            match_distance=ID_MATCH_DISTANCE,
+        )
 
         detections: list[dict] = []
+        vote_state: dict[int, dict[str, object]] = {}
         keyframe_pool: list[dict] = []
-        sample_count = max(1, (total_frames + skip_frames - 1) // skip_frames)
+        analysis_step = 1 if track_mode else max(skip_frames, 1)
+        if live_source:
+            sample_count = max(1, frame_limit // analysis_step) if frame_limit else None
+        else:
+            limited_total_frames = min(total_frames, frame_limit) if frame_limit else total_frames
+            sample_count = max(1, (limited_total_frames + analysis_step - 1) // analysis_step)
         self._preview_crop_refs = {}
 
-        print(f"Video: {video_name} | {total_frames} frames | {fps:.1f} FPS")
-        print(f"Sampling: every {skip_frames} frames | fixed IDs: 1..{total_shrimp}")
+        total_label = "live/unknown" if live_source else str(total_frames)
+        print(f"Video: {video_name} | {total_label} frames | {fps:.1f} FPS")
+        id_label = "dynamic IDs (unknown total)" if unknown_total else f"fixed IDs: 1..{total_shrimp}"
+        if track_mode:
+            print(f"Sampling: every frame for track mode | {id_label}")
+        else:
+            print(f"Sampling: every {analysis_step} frames | {id_label}")
+        if frame_limit:
+            print(f"Frame limit: {frame_limit} source frames")
+        print(f"OBB mode: {run_mode}")
+        if track_mode:
+            tracker_label = tracker_config if tracker_config else "Ultralytics default"
+            print(f"Tracking: YOLO track() enabled | tracker: {tracker_label}")
         if preview_only:
             print("Preview-only mode enabled. No CSV files, figures, or keyframes will be written.")
             print("Press q or Esc in the preview window to stop.")
@@ -103,34 +184,72 @@ class ShrimpSexRatioAnalyzer:
             print("Live preview enabled. Press q or Esc in the preview window to stop early.")
 
         frame_idx = 0
+        processed_source_frames = 0
+        processed_sample_frames = 0
         stop_requested = False
         with tqdm(total=sample_count, desc="Analyze frames", unit="frame", ncols=85) as pbar:
-            while frame_idx < total_frames:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                ok, frame = cap.read()
-                if not ok:
+            while live_source or frame_idx < total_frames:
+                if frame_limit and (processed_source_frames >= frame_limit or (not live_source and not track_mode and frame_idx >= frame_limit)):
                     break
 
-                frame_dets = assigner.assign(self._detect_frame(frame))
+                if live_source or track_mode:
+                    ok, frame = cap.read()
+                    if not ok:
+                        break
+                    current_frame_idx = frame_idx
+                    frame_idx += 1
+                    processed_source_frames += 1
+                    if not track_mode and current_frame_idx % analysis_step != 0:
+                        continue
+                else:
+                    current_frame_idx = frame_idx
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
+                    ok, frame = cap.read()
+                    if not ok:
+                        break
+                    frame_idx += analysis_step
+                    processed_source_frames = max(processed_source_frames, current_frame_idx + 1)
+
+                frame_dets = assigner.assign(
+                    self._detect_frame(
+                        frame,
+                        current_frame_idx=current_frame_idx,
+                        mode=run_mode,
+                        tracker_config=tracker_config,
+                    ),
+                    prefer_track=track_mode,
+                    current_frame_idx=current_frame_idx,
+                )
                 self._stabilize_preview_crops(frame_dets)
+                self._update_vote_state(frame_dets, vote_state, current_frame_idx, fps)
                 for det in frame_dets:
-                    detections.append(self._record_detection(det, frame_idx, fps))
+                    detections.append(self._record_detection(det, current_frame_idx, fps))
 
                 if frame_dets:
-                    preview_item = self._make_keyframe(frame, frame_idx, fps, frame_dets)
+                    preview_item = self._make_keyframe(frame, current_frame_idx, fps, frame_dets)
                     keyframe_pool.append(preview_item)
                 else:
-                    preview_item = self._make_empty_preview(frame, frame_idx, fps)
+                    preview_item = self._make_empty_preview(frame, current_frame_idx, fps)
+
+                if writer is not None:
+                    result_video_writer = self._write_result_video_frame(
+                        result_video_writer,
+                        writer.result_video_path,
+                        preview_item.get("Preview_Image", preview_item["Image"]),
+                        max(1.0, fps / max(analysis_step, 1)),
+                    )
 
                 if preview and self._show_preview(preview_item.get("Preview_Image", preview_item["Image"]), preview_scale, preview_wait_ms):
                     stop_requested = True
 
-                frame_idx += skip_frames
+                processed_sample_frames += 1
                 pbar.update(1)
                 if stop_requested:
                     break
 
         cap.release()
+        if result_video_writer is not None:
+            result_video_writer.release()
         if preview:
             cv2.destroyAllWindows()
 
@@ -141,32 +260,46 @@ class ShrimpSexRatioAnalyzer:
             print("No analysis outputs were written.")
             return {"summary": {}, "paths": {}, "output_dir": ""}
 
+        effective_total_frames = total_frames if not live_source else max(processed_source_frames, 1)
+        if frame_limit:
+            effective_total_frames = min(effective_total_frames, frame_limit)
         det_df = pd.DataFrame(detections)
         stats_df = det_df[det_df["Include_In_Stats"] == True].copy() if "Include_In_Stats" in det_df.columns else det_df
         truth = self._load_truth(truth_csv)
         if truth and not det_df.empty:
             det_df["True_Label"] = det_df["Shrimp_ID"].map(truth).fillna("")
             stats_df["True_Label"] = stats_df["Shrimp_ID"].map(truth).fillna("")
-        shrimp_df = self._summarize_shrimps(stats_df, total_shrimp)
+        observed_total_shrimp = self._observed_total_shrimp(stats_df) if unknown_total else total_shrimp
+        shrimp_df = self._summarize_shrimps(stats_df, observed_total_shrimp)
         if truth:
             shrimp_df["True_Label"] = shrimp_df["Shrimp_ID"].map(truth).fillna("")
             shrimp_df["Correct"] = shrimp_df.apply(
                 lambda r: bool(r["Final_Label"] == r["True_Label"]) if r["True_Label"] and r["Final_Label"] != "Unknown" else "",
                 axis=1,
             )
-        summary = self._summarize_video(shrimp_df, stats_df, video_name, fps, total_frames, gt_male, gt_female)
-        summary["Total_Shrimp"] = total_shrimp
+        summary = self._summarize_video(shrimp_df, stats_df, video_name, fps, effective_total_frames, gt_male, gt_female)
+        summary["Total_Shrimp"] = observed_total_shrimp
+        summary["Unknown_Total_Mode"] = bool(unknown_total)
+        summary["HBB_Temporal_Enabled"] = True
+        summary["HBB_Temporal_Frames"] = HBB_TEMPORAL_FRAMES
+        summary["HBB_Temporal_Step_Frames"] = self._hbb_temporal_step_frames
+        summary["HBB_Model"] = MODEL_HBB_3FRAME_PATH
+        summary["Mode"] = run_mode
+        summary["Tracking_Enabled"] = bool(track_mode)
+        summary["Tracker_Config"] = tracker_config or ""
+        summary["Track_IDs_Observed"] = self._count_observed_track_ids(stats_df)
+        summary["Processed_Source_Frames"] = int(processed_source_frames)
+        summary["Processed_Sample_Frames"] = int(processed_sample_frames)
         summary["Auto_Total_Enabled"] = bool(auto_total)
         if auto_total_summary:
             summary["Auto_Total_Recommended"] = auto_total_summary["Recommended_Total_Shrimp"]
             summary["Auto_Total_Percentile"] = auto_total_summary["Percentile_Used"]
             summary["Auto_Total_Skip_Frames"] = auto_total_summary["Skip_Frames"]
             summary["Auto_Total_Max_Frames"] = auto_total_summary["Max_Frames"]
-        time_windows = self._summarize_time_windows(stats_df, window_sec, total_frames, fps)
+        time_windows = self._summarize_time_windows(stats_df, window_sec, effective_total_frames, fps)
         evaluation = self._evaluate_predictions(stats_df, shrimp_df)
         error_cases = self._build_error_cases(shrimp_df)
         selected_keyframes = self._select_keyframes(keyframe_pool, keyframes)
-        writer = ReportWriter(output_root, video_name, run_id)
 
         paths = writer.write_all(
             detections=det_df,
@@ -176,6 +309,7 @@ class ShrimpSexRatioAnalyzer:
             evaluation=evaluation,
             error_cases=error_cases,
             keyframes=selected_keyframes,
+            result_video_path=writer.result_video_path,
             auto_total_counts=auto_total_counts,
             auto_total_summary=auto_total_summary,
         )
@@ -258,12 +392,23 @@ class ShrimpSexRatioAnalyzer:
         mean_conf = float(np.mean(confs)) if confs else 0.0
         return len(confs), mean_conf
 
-    def _detect_frame(self, frame) -> list[dict]:
-        obb_result = self.obb_model(frame, conf=0.6, iou=0.4, imgsz=IMGSZ_OBB, verbose=False)[0]
+    def _detect_frame(
+        self,
+        frame,
+        current_frame_idx: int = 0,
+        mode: str = "predict",
+        tracker_config: str | None = None,
+    ) -> list[dict]:
+        if mode == "track":
+            obb_result = self._track_obb_frame(frame, tracker_config)
+        elif mode == "predict":
+            obb_result = self._predict_obb_frame(frame)
+        else:
+            raise ValueError("mode must be 'predict' or 'track'")
         if obb_result.obb is None:
             return []
 
-        crops, metas = [], []
+        metas = []
         for obb in obb_result.obb:
             cls_idx = int(obb.cls.cpu().numpy()[0])
             if obb_result.names[cls_idx] != "shrimp":
@@ -275,20 +420,22 @@ class ShrimpSexRatioAnalyzer:
                 continue
             if crop.size == 0:
                 continue
-            crops.append(crop)
             metas.append({
                 "cx": float(obb_data[0]),
                 "cy": float(obb_data[1]),
+                "track_id": self._extract_obb_track_id(obb),
                 "vertices": np.asarray(vertices, dtype=np.int32).reshape(-1, 2),
                 "inverse_matrix": inverse_matrix,
                 "crop": crop,
             })
 
-        if not crops:
+        if not metas:
             return []
 
-        hbb_results = self.hbb_model(crops, imgsz=IMGSZ_HBB, verbose=False)
+        metas.sort(key=lambda m: (m["cx"], m["cy"]))
+        hbb_inputs = self._hbb_temporal_pipeline.build_inputs(metas, current_frame_idx)
         detections = []
+        hbb_results = self.hbb_model(hbb_inputs, imgsz=IMGSZ_HBB, verbose=False)
         for meta, res in zip(metas, hbb_results):
             male_conf = 0.0
             male_line_pts = None
@@ -301,8 +448,11 @@ class ShrimpSexRatioAnalyzer:
                     if name == "male_line" and conf >= HBB_CONF:
                         if conf > male_conf:
                             male_conf = conf
-                            male_line_pts = self._project_hbb_box(box, meta["inverse_matrix"])
-                            male_line_box_crop = box.xyxy[0].cpu().numpy().astype(float).tolist()
+                            male_line_box_crop = self._hbb_temporal_pipeline.unletterbox_box(
+                                box.xyxy[0].cpu().numpy().astype(float),
+                                meta["crop"].shape,
+                            )
+                            male_line_pts = self._hbb_temporal_pipeline.project_crop_box(male_line_box_crop, meta["inverse_matrix"])
             detections.append({
                 **meta,
                 "is_male": male_conf > 0,
@@ -311,6 +461,16 @@ class ShrimpSexRatioAnalyzer:
                 "male_line_box_crop": male_line_box_crop,
             })
         return detections
+
+    def _predict_obb_frame(self, frame):
+        raise ValueError("multi_channel_track analyzer does not support predict mode. Use predict.")
+
+    def _track_obb_frame(self, frame, tracker_config: str | None):
+        return track_obb_frame(self.obb_model, frame, tracker_config)
+
+    @staticmethod
+    def _extract_obb_track_id(obb) -> int | None:
+        return extract_obb_track_id(obb)
 
     @staticmethod
     def _project_hbb_box(box, inverse_matrix) -> np.ndarray:
@@ -361,6 +521,46 @@ class ShrimpSexRatioAnalyzer:
         return [crop_width - x2, y1, crop_width - x1, y2]
 
     @staticmethod
+    def _update_vote_state(
+        detections: list[dict],
+        vote_state: dict[int, dict[str, object]],
+        current_frame_idx: int,
+        fps: float,
+    ) -> None:
+        window_frames = max(1, int(round(float(fps) * VOTE_WINDOW_SECONDS)))
+        grace_frames = max(1, int(round(float(fps) * MALE_LINE_MISSING_GRACE_SECONDS)))
+        cutoff_frame = int(current_frame_idx) - window_frames
+        for det in detections:
+            if not det.get("include_in_stats", True):
+                continue
+            shrimp_id = det.get("shrimp_id")
+            if shrimp_id == "" or shrimp_id is None:
+                continue
+            shrimp_id = int(shrimp_id)
+            state = vote_state.setdefault(shrimp_id, {"samples": [], "last_male_frame": None})
+            samples = state["samples"]
+            is_male = bool(det.get("is_male"))
+            hold_active = False
+            if is_male:
+                samples.append((int(current_frame_idx), True))
+                state["last_male_frame"] = int(current_frame_idx)
+            else:
+                last_male_frame = state.get("last_male_frame")
+                hold_active = last_male_frame is not None and int(current_frame_idx) - int(last_male_frame) <= grace_frames
+                if not hold_active:
+                    samples.append((int(current_frame_idx), False))
+            samples[:] = [(frame_idx, sample_is_male) for frame_idx, sample_is_male in samples if frame_idx >= cutoff_frame]
+            male_hits = sum(1 for _, sample_is_male in samples if sample_is_male)
+            total_seen = len(samples)
+            male_rate = male_hits / max(total_seen, 1)
+            det["vote_total_seen"] = total_seen
+            det["vote_male_hits"] = male_hits
+            det["vote_male_rate"] = male_rate
+            det["vote_is_male"] = male_rate >= MALE_RATE_THRESHOLD
+            det["vote_label"] = "Male" if male_rate >= MALE_RATE_THRESHOLD else "Obs" if male_rate >= OBS_RATE_MIN else "Female"
+            det["vote_hold_active"] = hold_active
+
+    @staticmethod
     def _record_detection(det: dict, frame_idx: int, fps: float) -> dict:
         vertices = det["vertices"]
         x1, y1 = vertices.min(axis=0)
@@ -370,8 +570,14 @@ class ShrimpSexRatioAnalyzer:
             "Frame": frame_idx,
             "Time_Sec": round(frame_idx / fps, 2),
             "Shrimp_ID": int(shrimp_id) if shrimp_id != "" else "",
+            "Track_ID": det.get("track_id", ""),
             "Pred_Label": "Male" if det["is_male"] else "Female",
             "Male_Conf": round(float(det["male_conf"]), 4),
+            "Vote_Label": det.get("vote_label", ""),
+            "Vote_Male_Rate_Pct": round(float(det.get("vote_male_rate", 0.0)) * 100, 2),
+            "Vote_Total_Seen": int(det.get("vote_total_seen", 0)),
+            "Vote_Male_Hits": int(det.get("vote_male_hits", 0)),
+            "Appearance_Score": det.get("appearance_score", ""),
             "ID_Status": det["id_status"],
             "ID_Distance": det["id_distance"],
             "Include_In_Stats": bool(det.get("include_in_stats", True)),
@@ -385,11 +591,29 @@ class ShrimpSexRatioAnalyzer:
 
     def _summarize_shrimps(self, det_df: pd.DataFrame, total_shrimp: int) -> pd.DataFrame:
         rows = []
+        columns = [
+            "Shrimp_ID",
+            "Track_IDs",
+            "Total_Seen",
+            "Male_Hits",
+            "Female_Hits",
+            "Male_Rate_Pct",
+            "Mean_Male_Conf",
+            "Forced_ID_Count",
+            "Forced_ID_Rate_Pct",
+            "Decision_Margin_Pct",
+            "Final_Label",
+            "Enough_Evidence",
+        ]
         for shrimp_id in range(1, total_shrimp + 1):
             group = det_df[det_df["Shrimp_ID"] == shrimp_id] if not det_df.empty else pd.DataFrame()
             seen = int(len(group))
             male_hits = int((group["Pred_Label"] == "Male").sum()) if seen else 0
             forced = int((group["ID_Status"] == "forced").sum()) if seen else 0
+            track_ids = ""
+            if seen and "Track_ID" in group.columns:
+                values = group["Track_ID"].replace("", np.nan).dropna().unique()
+                track_ids = ";".join(str(int(v)) if float(v).is_integer() else str(v) for v in sorted(values))
             male_rate = male_hits / seen if seen else 0.0
             enough = seen >= MIN_OBSERVATIONS_PER_SHRIMP
             final = "Unknown"
@@ -397,6 +621,7 @@ class ShrimpSexRatioAnalyzer:
                 final = "Male" if male_rate >= MALE_RATE_THRESHOLD else "Female"
             rows.append({
                 "Shrimp_ID": shrimp_id,
+                "Track_IDs": track_ids,
                 "Total_Seen": seen,
                 "Male_Hits": male_hits,
                 "Female_Hits": seen - male_hits,
@@ -408,7 +633,7 @@ class ShrimpSexRatioAnalyzer:
                 "Final_Label": final,
                 "Enough_Evidence": enough,
             })
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows, columns=columns)
 
     @staticmethod
     def _load_truth(path: str | None) -> dict[int, str]:
@@ -479,8 +704,8 @@ class ShrimpSexRatioAnalyzer:
         result = {}
         reliable = shrimp_df[shrimp_df["Enough_Evidence"] == True]
         result["Reliable_Shrimp_Count"] = int(len(reliable))
-        result["Mean_Decision_Margin_Pct"] = round(float(shrimp_df["Decision_Margin_Pct"].mean()), 2)
-        result["Mean_Forced_ID_Rate_Pct"] = round(float(shrimp_df["Forced_ID_Rate_Pct"].mean()), 2)
+        result["Mean_Decision_Margin_Pct"] = round(float(shrimp_df["Decision_Margin_Pct"].mean()), 2) if not shrimp_df.empty else 0.0
+        result["Mean_Forced_ID_Rate_Pct"] = round(float(shrimp_df["Forced_ID_Rate_Pct"].mean()), 2) if not shrimp_df.empty else 0.0
         result["Min_Observations_Per_Shrimp"] = int(shrimp_df["Total_Seen"].min()) if not shrimp_df.empty else 0
 
         coverage = min(1.0, result["Reliable_Shrimp_Count"] / max(len(shrimp_df), 1))
@@ -494,6 +719,22 @@ class ShrimpSexRatioAnalyzer:
             det_valid = det_df[det_df.get("True_Label", "") != ""] if "True_Label" in det_df.columns else pd.DataFrame()
             result["Single_Frame_Accuracy_Pct"] = round((det_valid["True_Label"] == det_valid["Pred_Label"]).mean() * 100, 2) if len(det_valid) else ""
         return result
+
+    @staticmethod
+    def _count_observed_track_ids(det_df: pd.DataFrame) -> int:
+        if det_df.empty or "Track_ID" not in det_df.columns:
+            return 0
+        track_ids = det_df["Track_ID"].replace("", np.nan).dropna()
+        return int(track_ids.nunique())
+
+    @staticmethod
+    def _observed_total_shrimp(det_df: pd.DataFrame) -> int:
+        if det_df.empty or "Shrimp_ID" not in det_df.columns:
+            return 0
+        shrimp_ids = det_df["Shrimp_ID"].replace("", np.nan).dropna()
+        if shrimp_ids.empty:
+            return 0
+        return int(shrimp_ids.astype(int).max())
 
     @staticmethod
     def _build_error_cases(shrimp_df: pd.DataFrame) -> pd.DataFrame:
@@ -526,11 +767,14 @@ class ShrimpSexRatioAnalyzer:
         pred_female = int((shrimp_df["Final_Label"] == "Female").sum())
         unknown = int((shrimp_df["Final_Label"] == "Unknown").sum())
         decided = max(pred_male + pred_female, 1)
+        mean_seen = float(shrimp_df["Total_Seen"].mean()) if not shrimp_df.empty else 0.0
+        reliable_count = int(shrimp_df["Enough_Evidence"].sum()) if not shrimp_df.empty else 0
+        forced_rate = float(shrimp_df["Forced_ID_Rate_Pct"].mean()) if not shrimp_df.empty else 0.0
 
         summary = {
             "Video": video_name,
             "OBB_Model": MODEL_OBB_PATH,
-            "HBB_Model": MODEL_HBB_PATH,
+            "HBB_Model": MODEL_HBB_3FRAME_PATH,
             "IMGSZ_OBB": IMGSZ_OBB,
             "IMGSZ_HBB": IMGSZ_HBB,
             "HBB_CONF": HBB_CONF,
@@ -543,9 +787,9 @@ class ShrimpSexRatioAnalyzer:
             "Unknown": unknown,
             "Male_Ratio_Pct": round(pred_male / decided * 100, 2),
             "Female_Ratio_Pct": round(pred_female / decided * 100, 2),
-            "Mean_Observations_Per_Shrimp": round(float(shrimp_df["Total_Seen"].mean()), 2),
-            "Reliable_Shrimp_Count": int(shrimp_df["Enough_Evidence"].sum()),
-            "Mean_Forced_ID_Rate_Pct": round(float(shrimp_df["Forced_ID_Rate_Pct"].mean()), 2),
+            "Mean_Observations_Per_Shrimp": round(mean_seen, 2),
+            "Reliable_Shrimp_Count": reliable_count,
+            "Mean_Forced_ID_Rate_Pct": round(forced_rate, 2),
             "GT_Male": gt_male if gt_male is not None else "",
             "GT_Female": gt_female if gt_female is not None else "",
         }
@@ -560,6 +804,8 @@ class ShrimpSexRatioAnalyzer:
     def _make_keyframe(frame, frame_idx: int, fps: float, detections: list[dict]) -> dict:
         annotated = frame.copy()
         male_count = 0
+        female_count = 0
+        unknown_count = 0
         for det in detections:
             if not det.get("include_in_stats", True):
                 color = (150, 150, 150)
@@ -568,10 +814,19 @@ class ShrimpSexRatioAnalyzer:
                 x, y = det["vertices"][0]
                 cv2.putText(annotated, label, (int(x), max(24, int(y) - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                 continue
-            is_male = det["is_male"]
+            vote_label = det.get("vote_label", "Male" if det.get("is_male") else "Female")
+            is_male = vote_label == "Male"
+            is_obs = vote_label == "Obs"
+            is_female = vote_label == "Female"
             male_count += int(is_male)
-            color = (220, 110, 40) if is_male else (80, 190, 90)
-            label = f"ID{det['shrimp_id']} M {det['male_conf']:.2f}" if is_male else f"ID{det['shrimp_id']} F"
+            female_count += int(is_female)
+            unknown_count += int(is_obs)
+            color = ShrimpSexRatioAnalyzer._vote_color(vote_label)
+            track_suffix = f" T{det['track_id']}" if det.get("track_id") is not None else ""
+            vote_rate = det.get("vote_male_rate")
+            vote_suffix = f" V{vote_rate * 100:.0f}%" if vote_rate is not None else ""
+            label_code = "M" if is_male else "OBS" if is_obs else "F"
+            label = f"ID{det['shrimp_id']}{track_suffix} {label_code}{vote_suffix}"
             cv2.polylines(annotated, [det["vertices"]], True, color, 2)
             if det.get("male_line_pts") is not None:
                 cv2.polylines(annotated, [det["male_line_pts"]], True, (0, 255, 255), 2)
@@ -581,7 +836,7 @@ class ShrimpSexRatioAnalyzer:
         cv2.rectangle(annotated, (8, 8), (460, 74), (20, 20, 20), -1)
         cv2.putText(
             annotated,
-            f"Frame {frame_idx} | {frame_idx / fps:.1f}s | M {male_count} F {len(detections)-male_count}",
+            f"Frame {frame_idx} | {frame_idx / fps:.1f}s | M {male_count} F {female_count} Obs {unknown_count}",
             (18, 34),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.68,
@@ -594,7 +849,8 @@ class ShrimpSexRatioAnalyzer:
             "Time_Sec": round(frame_idx / fps, 2),
             "Detected_Total": len(detections),
             "Detected_Male": male_count,
-            "Detected_Female": len(detections) - male_count,
+            "Detected_Female": female_count,
+            "Detected_Obs": unknown_count,
             "Score": len(detections),
             "Image": annotated,
             "Preview_Image": preview_image,
@@ -697,17 +953,29 @@ class ShrimpSexRatioAnalyzer:
             label = f"{idx}. OVF"
             color = (110, 110, 110)
         else:
-            sex = "M" if det.get("is_male") else "F"
+            vote_label = det.get("vote_label", "Male" if det.get("is_male") else "Female")
+            sex = "M" if vote_label == "Male" else "OBS" if vote_label == "Obs" else "F"
             shrimp_id = det.get("shrimp_id", "")
-            conf = float(det.get("male_conf", 0.0))
-            label = f"{idx}. ID{shrimp_id} {sex}" + (f" {conf:.2f}" if sex == "M" else "")
-            color = (220, 110, 40) if sex == "M" else (80, 160, 80)
+            track_id = det.get("track_id")
+            track_suffix = f" T{track_id}" if track_id is not None else ""
+            vote_rate = det.get("vote_male_rate")
+            vote_suffix = f" V{vote_rate * 100:.0f}%" if vote_rate is not None else ""
+            label = f"{idx}. ID{shrimp_id}{track_suffix} {sex}{vote_suffix}"
+            color = ShrimpSexRatioAnalyzer._vote_color(vote_label)
         overlay = tile.copy()
         cv2.rectangle(overlay, (0, height - label_h), (width, height), (255, 255, 255), -1)
         cv2.addWeighted(overlay, 0.82, tile, 0.18, 0, tile)
         cv2.putText(tile, label, (8, height - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         cv2.rectangle(tile, (0, 0), (width - 1, height - 1), color, 1)
         return tile
+
+    @staticmethod
+    def _vote_color(vote_label: str):
+        if vote_label == "Male":
+            return (220, 110, 40)
+        if vote_label == "Obs":
+            return (150, 150, 150)
+        return (80, 190, 90)
 
     @staticmethod
     def _trim_preview_crop(crop, male_line_box):
@@ -763,6 +1031,17 @@ class ShrimpSexRatioAnalyzer:
         cv2.imshow("Shrimp Analysis Preview", display)
         key = cv2.waitKey(wait_ms) & 0xFF
         return key in (27, ord("q"), ord("Q"))
+
+    @staticmethod
+    def _write_result_video_frame(video_writer, path: str, image, fps: float):
+        if video_writer is None:
+            height, width = image.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            video_writer = cv2.VideoWriter(path, fourcc, max(float(fps), 1.0), (width, height))
+            if not video_writer.isOpened():
+                raise RuntimeError(f"Unable to create result video: {path}")
+        video_writer.write(image)
+        return video_writer
 
     @staticmethod
     def _select_keyframes(keyframes: list[dict], count: int) -> list[dict]:

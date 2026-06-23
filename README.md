@@ -1,861 +1,421 @@
 # Grass Shrimp Sex Ratio Analyzer
 
-## 中文版
+草蝦公母比例分析工具。輸入透明桶底部仰拍影片，系統會偵測蝦體、裁切拉正、辨識公蝦性徵 `male_line`，再用多幀統計輸出每隻蝦與整桶的公母判定結果。
 
-### 系統目的
+## 功能入口
 
-本系統用於分析養殖人員拍攝的草蝦仰拍影片。使用情境是：養殖人員將一批草蝦放入透明桶中，攝影機架設於桶底下方，系統在不取出蝦子的情況下，估計桶內公蝦與母蝦數量，並輸出可人工確認的關鍵幀與相關數據。
-
-系統重點不是長時間精準追蹤每一隻蝦，而是透過固定幀抽樣與多幀彙整，建立每隻蝦的公母辨識率，並提供影像佐證。
-
-### 核心流程
+目前主要功能已拆成三個獨立資料夾。每個資料夾都有自己的可執行檔與 `modules/`，不再使用舊的 `Fast-Stats.py`。
 
 ```text
-影片輸入
--> 固定幀抽樣
--> OBB 模型偵測蝦體全身
--> 將 OBB 蝦體裁切並拉正
--> HBB 模型偵測公蝦性徵 male_line
--> 固定 ID 池分配 Shrimp_ID
--> 每隻蝦累積多幀辨識結果
--> 輸出公母比例、每隻蝦辨識率、關鍵幀與評估數據
+predict/
+  單幀 OBB predict() 偵測
+  不使用 YOLO track()
+  適合固定抽幀分析、輸出正式統計、auto-total 預掃描
+
+general_track/
+  YOLO OBB track() + 單幀 HBB male_line
+  適合攝影機/影片即時預覽、一般追蹤測試
+
+multi_channel_track/
+  YOLO OBB track() + 3-frame 9-channel temporal HBB male_line
+  適合測試多通道 HBB 模型與時間序列判斷
 ```
 
-### 公蝦判定方式
+快速預覽：
 
-單一幀不直接決定一隻蝦的性別。系統會累積同一個 `Shrimp_ID` 的多次觀測：
+```powershell
+python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
+python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
+python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
+```
+
+## 專案結構
+
+```text
+model/
+  best.pt                      OBB 蝦體模型
+  best-hbb-yolo11l.pt           單幀 HBB male_line 模型
+  best-hbb-3frame.pt            3-frame 9-channel HBB 模型
+
+predict/
+  run_predict.py                predict 入口
+  exports/                      predict 匯出資料
+  modules/
+    analyzer.py                 predict 分析流程
+    obb_predict.py              OBB predict() 專屬邏輯
+    config.py                   模型路徑與門檻設定
+    id_assigner.py              ID 分配
+    preprocessing.py            OBB crop/拉正
+    reporting.py                CSV、圖表與結果影片輸出
+
+general_track/
+  run_track.py                  一般 track 入口
+  exports/                      一般 track 匯出資料
+  modules/
+    analyzer.py                 track 分析流程
+    obb_track.py                OBB track() 與 track id 抽取
+    ...
+
+multi_channel_track/
+  run_multi_channel_track.py    多通道 track 入口
+  exports/                      多通道 track 匯出資料
+  modules/
+    analyzer.py                 多通道 track 分析流程
+    obb_track.py                OBB track()
+    temporal_hbb.py             3-frame 9-channel HBB 輸入堆疊
+    ...
+
+compare_runs.py                 彙整多次 outputs 結果
+video/                          影片輸入
+Train/                          訓練資料與訓練腳本
+```
+
+若根目錄仍有舊的 `modules/`，目前三個新入口已不依賴它。確認沒有要保留的本地改動後可以移除。
+
+## 安裝
+
+建議使用 Python 3.9 以上版本。
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+pip install ultralytics opencv-python numpy pandas matplotlib tqdm
+```
+
+如果不使用 CUDA，請依照你的環境安裝對應的 PyTorch CPU 版本。
+
+## 模型與主要參數
+
+每個功能資料夾都有自己的 `modules/config.py`。一般 HBB 與多通道 HBB 已分開：
+
+```python
+# predict/modules/config.py
+MODEL_OBB_PATH = "model/best.pt"
+MODEL_HBB_PATH = "model/best-hbb-yolo11l.pt"
+
+# general_track/modules/config.py
+MODEL_OBB_PATH = "model/best.pt"
+MODEL_HBB_PATH = "model/best-hbb-yolo11l.pt"
+
+# multi_channel_track/modules/config.py
+MODEL_OBB_PATH = "model/best.pt"
+MODEL_HBB_3FRAME_PATH = "model/best-hbb-3frame.pt"
+HBB_TEMPORAL_FRAMES = 3
+HBB_TEMPORAL_STEP_FRAMES = 10
+```
+
+共用門檻與常用參數：
+
+```python
+IMGSZ_OBB = 960
+IMGSZ_HBB = 416
+HBB_CONF = 0.30
+
+MALE_RATE_THRESHOLD = 0.50
+OBS_RATE_MIN = 0.25
+VOTE_WINDOW_SECONDS = 10.0
+MALE_LINE_MISSING_GRACE_SECONDS = 1.0
+MIN_OBSERVATIONS_PER_SHRIMP = 3
+ID_MATCH_DISTANCE = 260
+DEFAULT_SKIP_FRAMES = 10
+DEFAULT_TOTAL_SHRIMP = 6
+DEFAULT_KEYFRAMES = 12
+```
+
+預覽投票不是看單一幀，而是使用同一個 `Shrimp_ID` 最近 10 秒的滑動視窗觀測：
 
 ```text
 Male_Rate = Male_Hits / Total_Seen
 ```
 
-若：
+顯示規則：
 
 ```text
-Total_Seen >= MIN_OBSERVATIONS_PER_SHRIMP
-且 Male_Rate >= MALE_RATE_THRESHOLD
+0.00 ~ 0.24  Female  綠色框
+0.25 ~ 0.49  Obs     灰色框
+0.50 以上    Male    藍色框
 ```
 
-則判定為公蝦。否則若觀測數足夠但命中率低於門檻，判定為母蝦。觀測數不足則為 `Unknown`。
+預覽畫面的外框顏色使用 10 秒滑動投票結果，而不是只看當幀 `male_line`。黃色小框仍只代表當幀實際偵測到的 `male_line` 位置。
 
-目前主要參數位於 `modules/config.py`：
+若某隻蝦上一幀或近期剛偵測到 `male_line`，但後續短暫漏偵，系統會等待 `MALE_LINE_MISSING_GRACE_SECONDS`。預設 1 秒內的漏偵不會新增 female 票，也不會拉低投票百分比；超過 1 秒仍沒有偵測到 `male_line`，才會繼續把後續觀測納入投票分母。
 
-```python
-HBB_CONF = 0.60
-MALE_RATE_THRESHOLD = 0.50
-MIN_OBSERVATIONS_PER_SHRIMP = 3
+輸出統計的 `per_shrimp_summary.csv` 仍保留整段影片的多幀彙整，用於正式分析結果。
+
+## 執行方式
+
+### 1. Predict 正式抽幀分析
+
+適合產生正式 CSV、圖表與關鍵幀。
+
+```powershell
+python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --skip-frames 10 --window-sec 10
 ```
 
-### ID 指派方式
+未知總數時，可使用動態 ID：
 
-系統使用固定 ID 池，例如：
+```powershell
+python -m predict.run_predict --video "video\未知桶.mp4" --unknown-total --skip-frames 10
+```
+
+也可先用 OBB-only 預掃描估計總蝦數：
+
+```powershell
+python -m predict.run_predict --video "video\未知桶.mp4" --auto-total --skip-frames 10 --auto-total-percentile 90
+```
+
+預覽但不輸出檔案：
+
+```powershell
+python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
+```
+
+### 2. General Track 一般追蹤
+
+`general_track` 會逐幀處理，以維持 YOLO tracker 連續性；目前不開放 `--skip-frames`、`--max-frames`、`--keyframes`、`--window-sec`、`--truth-csv`、`--preview-scale`、`--preview-wait-ms`。
+
+```powershell
+python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --preview-only
+```
+
+指定 tracker 設定：
+
+```powershell
+python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --tracker bytetrack.yaml --preview-only
+```
+
+指定一般 track 使用的 HBB `male_line` 模型：
+
+```powershell
+python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --hbb-model "model\best-hbb-yolo11m.pt" --preview-only
+```
+
+攝影機測試：
+
+```powershell
+python -m general_track.run_track --video 0 --unknown-total --preview-only
+```
+
+### 3. Multi-Channel Track 多通道追蹤
+
+`multi_channel_track` 使用 YOLO track id 建立時間序列 crop buffer，將 3 個時間點的 RGB crop 堆疊成 9-channel HBB 輸入。
+
+```powershell
+python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
+```
+
+調整 temporal HBB 取樣間隔：
+
+```powershell
+python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --hbb-temporal-step-frames 10 --preview-only
+```
+
+## 常用參數
 
 ```text
---total-shrimp 6
+--video                    影片路徑或攝影機編號，例如 0
+--output-root              輸出根目錄，預設為各模式資料夾內的 exports
+--known-total              使用固定總蝦數
+--unknown-total            不限制總蝦數，依偵測/追蹤動態建立 ID，預設啟用
+--total-shrimp             固定總蝦數，搭配 --known-total 使用
+--preview                  分析時顯示即時預覽並輸出檔案
+--preview-only             只顯示預覽，不輸出 CSV/圖表/結果影片
+--tracker                  track 入口可指定 Ultralytics tracker YAML
+--hbb-model                general_track 可指定 HBB male_line 模型路徑
+--gt-male / --gt-female    整桶公母數真值
 ```
 
-則只允許：
+只有 `predict` 支援：
+
+```text
+--skip-frames
+--max-frames
+--window-sec
+--truth-csv
+--preview-scale
+--preview-wait-ms
+--auto-total
+--auto-total-percentile
+--auto-total-skip-frames
+--auto-total-max-frames
+```
+
+只有 `multi_channel_track` 支援：
+
+```text
+--hbb-temporal-step-frames
+```
+
+## ID 指派
+
+`predict` 使用蝦體中心點距離配對，將偵測結果分配到 `Shrimp_ID`。
+
+`general_track` 和 `multi_channel_track` 預設使用 `--tracker bytetrack.yaml`，先由 YOLO `track()` / ByteTrack 產生 tracker id，再映射到固定或動態 `Shrimp_ID`。
+
+原本自訂的 ID 回朔與外觀重連已移除。track 模式不再用中心點距離把新的 tracker id 回接到舊 ID；若 ByteTrack 產生新的 track id，系統會依目前模式建立新的 `Shrimp_ID` 或在固定總數已滿時標記 `overflow`。
+
+若使用 `--known-total --total-shrimp 6`，固定 ID 範圍為：
 
 ```text
 ID1 ~ ID6
 ```
 
-ID 是依據蝦體中心點距離進行分配，不使用 YOLO tracking。若同一幀偵測數量超過總蝦數，多出的框會被標記為：
+同一幀超出固定總數的偵測會標記為：
 
 ```text
 ID_Status = overflow
 Include_In_Stats = False
 ```
 
-這些 overflow 框會保留在 `detections.csv`，但不納入每隻蝦統計。
+overflow 仍會保留在 `detections.csv`，但不納入每隻蝦統計。
 
-### 執行方式
+## 輸出
 
-### 套件需求
-
-建議使用 Python 3.9 以上版本，並在專案資料夾建立虛擬環境後安裝套件：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install ultralytics pandas tqdm
-```
-
-主要套件用途：
+每次正式分析會建立：
 
 ```text
-ultralytics     載入與執行 YOLO OBB/HBB 模型
-opencv-python   讀取影片、影像裁切、繪製 keyframe
-numpy           影像陣列與座標計算
-pandas          輸出與讀取 CSV 統計資料
-matplotlib      產生統計圖表
-tqdm            顯示影片分析進度
+<mode>/exports/<video_name>/analysis_<timestamp>/
+  data/
+    bucket_summary.csv
+    per_shrimp_summary.csv
+    detections.csv
+    time_window_summary.csv
+    reliability_summary.csv
+    evaluation_summary.csv
+    error_cases.csv
+    truth_template.csv
+    auto_total_counts.csv       使用 --auto-total 時產生
+    auto_total_summary.csv      使用 --auto-total 時產生
+    confusion_matrix.csv        使用 --truth-csv 時產生
+  figures/
+    sex_ratio_summary.png
+    per_shrimp_male_rate.png
+    per_shrimp_detection_counts.png
+    per_id_male_probability_10s.png
+    temporal_sex_ratio.png
+    auto_total_counts.png       使用 --auto-total 時產生
+    single_vs_multiframe_accuracy.png  使用 --truth-csv 時產生
+    confusion_matrix.png        使用 --truth-csv 時產生
+  videos/
+    result_video.mp4
 ```
 
-若要使用 GPU/CUDA，請先依照 PyTorch 官方建議安裝對應版本的 `torch`，再安裝上述套件；一般 CPU 執行可直接使用上述指令。
+預設輸出根目錄：
 
-基本執行：
+```text
+predict/exports/
+general_track/exports/<obb_model>_and_<hbb_model>/
+multi_channel_track/exports/<step_frames>FPS/
+```
+
+例如：
+
+```text
+multi_channel_track/exports/30FPS/公母蝦仰拍-1/analysis_<timestamp>/
+multi_channel_track/exports/10FPS/公母蝦仰拍-1/analysis_<timestamp>/
+
+general_track/exports/yolo11m-obb_and_yolo11m-hbb/公母蝦仰拍-1/analysis_<timestamp>/
+general_track/exports/yolo11m-obb_and_yolo11s-hbb/公母蝦仰拍-1/analysis_<timestamp>/
+```
+
+### 主要 CSV
+
+```text
+bucket_summary.csv
+  整桶結果：Pred_Male, Pred_Female, Unknown, Male_Ratio_Pct, 使用模式、模型路徑與主要門檻
+
+per_shrimp_summary.csv
+  每隻蝦統計：Total_Seen, Male_Hits, Male_Rate_Pct, Final_Label, Track_IDs, Enough_Evidence
+
+detections.csv
+  每幀每個偵測：Frame, Time_Sec, Shrimp_ID, Track_ID, Pred_Label, Male_Conf, Vote_Male_Rate_Pct, ID_Status, Box 座標
+
+reliability_summary.csv
+  不需要人工真值的可靠性摘要：ID coverage、overflow rate、forced ID rate、male_line detection rate
+
+truth_template.csv
+  人工標記模板。填入 True_Label 後可用 --truth-csv 重新分析產生準確率與混淆矩陣
+```
+
+### 新增匯出項目
+
+```text
+videos/result_video.mp4
+  每個分析幀的標註結果影片。
+
+figures/per_shrimp_detection_counts.png
+  每個 Shrimp_ID 的被辨識總次數與 male_line 公蝦性徵總次數長條圖。
+
+figures/per_id_male_probability_10s.png
+  每 10 秒區間中，每個 Shrimp_ID 的公蝦機率折線圖。
+```
+
+## 人工真值與評估
+
+第一次分析後，系統會輸出：
+
+```text
+<mode>/exports/<video_name>/analysis_<timestamp>/data/truth_template.csv
+```
+
+在 `True_Label` 填入 `Male` 或 `Female` 後重新執行：
 
 ```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --keyframes 12 --window-sec 10
+python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --truth-csv "outputs\<video>\analysis_<timestamp>\data\truth_template.csv"
 ```
 
-若已知真實公母數，可加入：
+提供 `--truth-csv` 後會額外輸出：
+
+```text
+single_vs_multiframe_accuracy.png
+confusion_matrix.csv
+confusion_matrix.png
+error_cases.csv
+```
+
+若只知道整桶公母數，可以用：
 
 ```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --keyframes 12 --window-sec 10 --gt-male 3 --gt-female 3
+python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --gt-male 3 --gt-female 3
 ```
 
-若已填寫每隻蝦的人工真值，可用：
+## 多次結果彙整
 
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --keyframes 12 --window-sec 10 --truth-csv "outputs\<video>\analysis_<time>\data\truth_template.csv"
-```
-
-若不確定桶內蝦子總數，可先讓系統用 OBB-only 預掃描自動估計：
-
-```powershell
-python Fast-Stats.py --video "video\未知桶.mp4" --auto-total --skip-frames 10 --keyframes 12 --window-sec 10
-```
-
-預設使用每個抽樣幀 OBB 偵測數的第 90 百分位數作為建議總數。可調整：
-
-```powershell
-python Fast-Stats.py --video "video\未知桶.mp4" --auto-total --auto-total-percentile 95 --skip-frames 10
-```
-
-也可以讓自動估數使用和正式分析不同的抽樣幀數設定：
-
-```powershell
-python Fast-Stats.py --video "video\未知桶.mp4" --auto-total --auto-total-skip-frames 5 --auto-total-max-frames 120 --skip-frames 10
-```
-
-這代表自動估數階段每 5 幀掃一次，最多使用 120 個抽樣幀；正式分析仍每 10 幀分析一次。
-
-若要在分析時即時查看標註畫面，可加入：
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --preview
-```
-
-預覽視窗會顯示每個抽樣幀的 OBB、Shrimp_ID、M/F 與 male_line 黃色框，右側會同步顯示每一隻蝦經 OBB 裁切拉正後的 crop。crop 會統一成長軸水平，右側縮圖依 Shrimp_ID 固定排序，並會用同一 ID 的上一幀 crop 穩定左右方向，減少預覽時左右翻轉。crop 內會標出 male_line 黃框。預覽頻率由 `--skip-frames` 決定，例如 `--skip-frames 10` 代表每 10 幀顯示一次；若要接近逐幀查看，可設為 `--skip-frames 1`。按 `q` 或 `Esc` 可提前停止分析；輸出的統計會以已處理的幀為準。若畫面太大，可用 `--preview-scale` 調整：
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --preview --preview-scale 0.5
-```
-
-若只想查看即時畫面與右側 crop，不想輸出 CSV、圖表或 keyframe，可使用：
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 1 --preview-only
-```
-
-`--preview-only` 適合檢查模型與畫面，不會建立 `outputs/<video>/analysis_<timestamp>/`。
-
-彙整多次分析結果與模型比較：
+彙整所有分析：
 
 ```powershell
 python compare_runs.py --outputs outputs
 ```
 
-只比較每部影片最新一次分析：
+只取每部影片最新一次：
 
 ```powershell
 python compare_runs.py --outputs outputs --latest-only
 ```
 
-若需要額外輸出模型比較圖與合併混淆矩陣圖，可加：
+額外輸出比較圖：
 
 ```powershell
 python compare_runs.py --outputs outputs --latest-only --extra-plots
 ```
 
-### 主要參數
+輸出位置：
 
 ```text
---video          輸入影片路徑
---total-shrimp   桶中預期蝦子總數
---auto-total     使用 OBB-only 預掃描自動估計桶中蝦子總數
---auto-total-percentile 自動估總數時使用的偵測數百分位數，預設 90
---auto-total-skip-frames 自動估總數預掃描每隔幾幀偵測一次，預設同 --skip-frames
---auto-total-max-frames 自動估總數最多使用幾個抽樣幀
---skip-frames    每隔幾幀分析一次
---keyframes      輸出幾張關鍵幀圖片
---window-sec     每幾秒統計一次時間窗數據，預設 10 秒
---gt-male        選填，真實公蝦數
---gt-female      選填，真實母蝦數
---truth-csv      選填，每隻 ID 的人工真值 CSV
---preview        分析時顯示即時標註預覽視窗
---preview-only   只顯示即時預覽，不輸出 CSV、圖表或 keyframe
---preview-scale  預覽視窗縮放比例，預設 0.75
---preview-wait-ms 每個預覽幀停留毫秒數，預設 1
-```
-
-### 輸出結構
-
-每次分析會建立：
-
-```text
-outputs/<video_name>/analysis_<timestamp>/
-  data/
-    bucket_summary.csv
-    per_shrimp_summary.csv
-    detections.csv
-    auto_total_counts.csv
-    auto_total_summary.csv
-    evaluation_summary.csv
-    reliability_summary.csv
-    time_window_summary.csv
-    error_cases.csv
-    truth_template.csv
-    keyframe_index.csv
-  figures/
-    sex_ratio_summary.png
-    auto_total_counts.png
-    per_shrimp_male_rate.png
-    temporal_sex_ratio.png
-    single_vs_multiframe_accuracy.png
-    confusion_matrix.png
-  evidence/
-    keyframes/
-      keyframe_*.jpg
-
 outputs/comparison/
   model_comparison_summary.csv
   per_video_performance.png
   combined_confusion_matrix.csv
+  combined_confusion_matrix.png    使用 --extra-plots 時產生
+  count_accuracy_by_model.png      使用 --extra-plots 時產生
 ```
 
-`single_vs_multiframe_accuracy.png`、`confusion_matrix.png` 與 `confusion_matrix.csv` 需要提供 `--truth-csv` 後才會產生。
-
-### 重要輸出說明
-
-#### `bucket_summary.csv`
-
-整桶層級的分析摘要：
-
-```text
-Pred_Male
-Pred_Female
-Unknown
-Male_Ratio_Pct
-Female_Ratio_Pct
-Count_Accuracy_Pct
-Exact_Count_Match
-```
-
-#### `auto_total_summary.csv`
-
-使用 `--auto-total` 時產生的自動估總數摘要：
-
-```text
-Frames_Used
-Skip_Frames
-Max_Frames
-Percentile_Used
-Recommended_Total_Shrimp
-Percentile_Count
-Median_Count
-Max_Count
-P50_Count
-P95_Count
-Stability_Gap_P95_P50
-Auto_Total_Confidence
-```
-
-#### `auto_total_counts.csv`
-
-使用 `--auto-total` 時，每個抽樣幀的 OBB 偵測數：
-
-```text
-Frame
-Time_Sec
-OBB_Detection_Count
-Mean_OBB_Conf
-```
-
-#### `per_shrimp_summary.csv`
-
-每隻蝦的多幀辨識結果：
-
-```text
-Shrimp_ID
-Total_Seen
-Male_Hits
-Female_Hits
-Male_Rate_Pct
-Mean_Male_Conf
-Forced_ID_Count
-Forced_ID_Rate_Pct
-Decision_Margin_Pct
-Final_Label
-Enough_Evidence
-```
-
-#### `detections.csv`
-
-每一個抽樣幀中的偵測紀錄：
-
-```text
-Frame
-Time_Sec
-Shrimp_ID
-Pred_Label
-Male_Conf
-ID_Status
-ID_Distance
-Include_In_Stats
-Box_X1, Box_Y1, Box_X2, Box_Y2
-```
-
-#### `time_window_summary.csv`
-
-依影片幀數與 FPS，每 10 秒統計一次：
-
-```text
-Start_Sec
-End_Sec
-Start_Frame
-End_Frame
-Observed_IDs
-Male
-Female
-Male_Ratio_Pct
-Detections
-Forced_ID_Rate_Pct
-```
-
-#### `reliability_summary.csv`
-
-不需要人工真值即可產生的系統可靠性摘要：
-
-```text
-ID_Coverage_Rate_Pct
-Enough_Evidence_Rate_Pct
-Overflow_Rate_Pct
-Overflow_Frame_Rate_Pct
-Forced_Detection_Rate_Pct
-Mean_ID_Distance
-Male_Line_Detection_Rate_Pct
-Time_Window_Male_Ratio_Std
-Keyframe_Count
-```
-
-#### `truth_template.csv`
-
-系統會自動產生此檔案，供人工填寫每個 `Shrimp_ID` 的真實性別：
-
-```text
-Shrimp_ID
-Final_Label
-Total_Seen
-Male_Rate_Pct
-True_Label
-Notes
-```
-
-填好 `True_Label` 後，再用 `--truth-csv` 重新分析，即可產生單幀與多幀準確率、混淆矩陣與錯誤案例。
-
-### 圖表說明
-
-```text
-sex_ratio_summary.png
-  整桶公母數量估計
-
-auto_total_counts.png
-  使用 OBB-only 預掃描估計蝦子總數的時間序列
-
-per_shrimp_male_rate.png
-  每隻蝦的 male_line 命中率
-
-temporal_sex_ratio.png
-  每個 Shrimp_ID 在各時間窗中的 Male/Female/Unknown 變化
-
-single_vs_multiframe_accuracy.png
-  單幀判斷與多幀彙整準確率比較
-
-confusion_matrix.png
-  公母辨識混淆矩陣，包含 Male、Female、Unknown 系統輸出
-```
-
-### 多次 Run 彙整輸出
-
-`compare_runs.py` 會掃描 `outputs/<video_name>/analysis_<timestamp>/data/`，整合每次分析的 `bucket_summary.csv`、`per_shrimp_summary.csv`、`reliability_summary.csv` 與可用的真值評估資料。
-
-主要輸出：
-
-```text
-model_comparison_summary.csv
-  每個 run 的整桶結果、模型路徑、門檻、Unknown rate、count accuracy、macro F1、balanced accuracy 與可靠性指標
-
-per_video_performance.png
-  每部影片或每個 run 的 Pred Male / Pred Female / Unknown 堆疊圖
-
-combined_confusion_matrix.csv
-  合併所有有 True_Label 的 run，產生 Male/Female/Unknown 端到端混淆矩陣表格
-```
-
-### Keyframe 佐證圖片
-
-關鍵幀會輸出到：
-
-```text
-evidence/keyframes/
-```
-
-圖片上會顯示：
-
-```text
-ID1 M 0.82
-ID2 F
-OVF
-```
-
-其中：
-
-```text
-M      系統判為公蝦觀測
-F      系統判為母蝦觀測
-0.82   male_line 信心度
-OVF    overflow，不納入統計
-黃色框 male_line 偵測位置
-```
-
-### 目前限制
-
-- `Shrimp_ID` 是系統分配的固定 ID，不等於保證完全正確的真實個體追蹤。
-- 水中遮擋、重疊、快速移動仍可能造成 ID switch。
-- 若 `Forced_ID_Rate_Pct` 偏高，代表該 ID 統計可信度較低。
-- 最終性別判定依賴多幀結果，不建議只看單一 keyframe 做結論。
-
----
-
-## English Version
-
-### Purpose
-
-This system analyzes bottom-view videos of grass shrimp placed in a transparent bucket. The goal is to estimate the number and ratio of male and female shrimp without removing them from the bucket, while also exporting evidence frames for human verification.
-
-The system is not designed as a strict long-term tracker. Instead, it uses fixed-frame sampling, a fixed ID pool, and multi-frame evidence aggregation to estimate the sex of each shrimp.
-
-### Pipeline
-
-```text
-Input video
--> Fixed-frame sampling
--> OBB model detects whole shrimp bodies
--> OBB crops are straightened
--> HBB model detects male feature: male_line
--> Fixed ID pool assigns Shrimp_ID
--> Multi-frame observations are aggregated per ID
--> Sex ratio, per-shrimp recognition rate, figures, CSV files, and keyframes are exported
-```
-
-### Male Classification Rule
-
-A single frame does not determine the final sex. For each `Shrimp_ID`, the system aggregates multiple observations:
-
-```text
-Male_Rate = Male_Hits / Total_Seen
-```
-
-If:
-
-```text
-Total_Seen >= MIN_OBSERVATIONS_PER_SHRIMP
-and Male_Rate >= MALE_RATE_THRESHOLD
-```
-
-the shrimp is classified as male. If enough observations exist but the male rate is below the threshold, it is classified as female. If there are not enough observations, the final label is `Unknown`.
-
-Current parameters are defined in `modules/config.py`:
-
-```python
-HBB_CONF = 0.60
-MALE_RATE_THRESHOLD = 0.50
-MIN_OBSERVATIONS_PER_SHRIMP = 3
-```
-
-### ID Assignment
-
-The system uses a fixed ID pool. For example:
-
-```text
---total-shrimp 6
-```
-
-limits IDs to:
-
-```text
-ID1 ~ ID6
-```
-
-IDs are assigned by centroid distance matching. YOLO tracking is not used. If a frame contains more detections than the expected shrimp count, extra detections are marked as:
-
-```text
-ID_Status = overflow
-Include_In_Stats = False
-```
-
-Overflow detections are kept in `detections.csv` for review but are excluded from per-shrimp statistics.
-
-### Usage
-
-### Requirements
-
-Python 3.9 or later is recommended. Create a virtual environment in the project folder and install the required packages:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install ultralytics pandas tqdm
-```
-
-Package usage:
-
-```text
-ultralytics     Load and run YOLO OBB/HBB models
-opencv-python   Read videos, crop images, and draw keyframes
-numpy           Image arrays and coordinate calculations
-pandas          Read and write CSV statistics
-matplotlib      Generate summary figures
-tqdm            Show analysis progress
-```
-
-For GPU/CUDA execution, install the matching `torch` build recommended by the official PyTorch instructions before installing the packages above. CPU execution can use the command above directly.
-
-Basic run:
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --keyframes 12 --window-sec 10
-```
-
-With known bucket-level ground truth:
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --keyframes 12 --window-sec 10 --gt-male 3 --gt-female 3
-```
-
-With per-shrimp manual labels:
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --keyframes 12 --window-sec 10 --truth-csv "outputs\<video>\analysis_<time>\data\truth_template.csv"
-```
-
-If the total shrimp count is unknown, use an OBB-only prescan to estimate it:
-
-```powershell
-python Fast-Stats.py --video "video\unknown_bucket.mp4" --auto-total --skip-frames 10 --keyframes 12 --window-sec 10
-```
-
-By default, the recommended count is computed from the 90th percentile of sampled-frame OBB counts. You can adjust it:
-
-```powershell
-python Fast-Stats.py --video "video\unknown_bucket.mp4" --auto-total --auto-total-percentile 95 --skip-frames 10
-```
-
-The auto-total prescan can use a different frame sampling setting from the formal analysis:
-
-```powershell
-python Fast-Stats.py --video "video\unknown_bucket.mp4" --auto-total --auto-total-skip-frames 5 --auto-total-max-frames 120 --skip-frames 10
-```
-
-This scans every 5 frames for auto-total estimation with at most 120 sampled frames, while the formal analysis still uses every 10 frames.
-
-To inspect annotated frames during analysis, add:
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --preview
-```
-
-The preview window shows each sampled frame with OBB, Shrimp_ID, M/F labels, and yellow male_line boxes. The right panel also shows the straightened OBB crop for each detected shrimp. Crops are normalized to a horizontal long axis, right-panel thumbnails are sorted by Shrimp_ID, and each ID is compared with its previous crop to reduce left-right flipping in the preview. male_line is drawn inside each crop when detected. Preview frequency is controlled by `--skip-frames`; for example, `--skip-frames 10` displays every 10th frame, while `--skip-frames 1` is close to frame-by-frame viewing. Press `q` or `Esc` to stop early; exported summaries will use the frames processed so far. Use `--preview-scale` if the window is too large:
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 10 --preview --preview-scale 0.5
-```
-
-To only inspect the live view and right-side crops without writing CSV files, figures, or keyframes:
-
-```powershell
-python Fast-Stats.py --video "video\公母蝦仰拍-1.mp4" --total-shrimp 6 --skip-frames 1 --preview-only
-```
-
-`--preview-only` is intended for model and image inspection. It does not create `outputs/<video>/analysis_<timestamp>/`.
-
-Combine multiple analysis runs and compare model/run results:
-
-```powershell
-python compare_runs.py --outputs outputs
-```
-
-Compare only the latest analysis run for each video:
-
-```powershell
-python compare_runs.py --outputs outputs --latest-only
-```
-
-To also export the model comparison plot and combined confusion matrix plot:
-
-```powershell
-python compare_runs.py --outputs outputs --latest-only --extra-plots
-```
-
-### Main Arguments
-
-```text
---video          Input video path
---total-shrimp   Expected shrimp count in the bucket
---auto-total     Estimate total shrimp count with an OBB-only prescan
---auto-total-percentile Percentile of OBB counts used by auto-total, default 90
---auto-total-skip-frames Frame interval used by the auto-total prescan, default is --skip-frames
---auto-total-max-frames Maximum sampled frames used by the auto-total prescan
---skip-frames    Analyze every N frames
---keyframes      Number of evidence keyframes to export
---window-sec     Temporal window size in seconds, default 10
---gt-male        Optional bucket-level male count
---gt-female      Optional bucket-level female count
---truth-csv      Optional per-shrimp ground-truth CSV
---preview        Show a live annotated preview window during analysis
---preview-only   Only show live preview; do not write CSV files, figures, or keyframes
---preview-scale  Preview scale factor, default 0.75
---preview-wait-ms Delay in milliseconds for each preview frame, default 1
-```
-
-### Output Structure
-
-Each run creates:
-
-```text
-outputs/<video_name>/analysis_<timestamp>/
-  data/
-    bucket_summary.csv
-    per_shrimp_summary.csv
-    detections.csv
-    auto_total_counts.csv
-    auto_total_summary.csv
-    evaluation_summary.csv
-    reliability_summary.csv
-    time_window_summary.csv
-    error_cases.csv
-    truth_template.csv
-    keyframe_index.csv
-  figures/
-    sex_ratio_summary.png
-    auto_total_counts.png
-    per_shrimp_male_rate.png
-    temporal_sex_ratio.png
-    single_vs_multiframe_accuracy.png
-    confusion_matrix.png
-  evidence/
-    keyframes/
-      keyframe_*.jpg
-
-outputs/comparison/
-  model_comparison_summary.csv
-  per_video_performance.png
-  combined_confusion_matrix.csv
-```
-
-`single_vs_multiframe_accuracy.png`, `confusion_matrix.png`, and `confusion_matrix.csv` are generated only when `--truth-csv` is provided.
-
-### Key CSV Files
-
-#### `bucket_summary.csv`
-
-Bucket-level summary:
-
-```text
-Pred_Male
-Pred_Female
-Unknown
-Male_Ratio_Pct
-Female_Ratio_Pct
-Count_Accuracy_Pct
-Exact_Count_Match
-```
-
-#### `auto_total_summary.csv`
-
-Auto-total summary generated when `--auto-total` is used:
-
-```text
-Frames_Used
-Skip_Frames
-Max_Frames
-Percentile_Used
-Recommended_Total_Shrimp
-Percentile_Count
-Median_Count
-Max_Count
-P50_Count
-P95_Count
-Stability_Gap_P95_P50
-Auto_Total_Confidence
-```
-
-#### `auto_total_counts.csv`
-
-OBB detection count for each sampled frame when `--auto-total` is used:
-
-```text
-Frame
-Time_Sec
-OBB_Detection_Count
-Mean_OBB_Conf
-```
-
-#### `per_shrimp_summary.csv`
-
-Per-shrimp multi-frame recognition summary:
-
-```text
-Shrimp_ID
-Total_Seen
-Male_Hits
-Female_Hits
-Male_Rate_Pct
-Mean_Male_Conf
-Forced_ID_Count
-Forced_ID_Rate_Pct
-Decision_Margin_Pct
-Final_Label
-Enough_Evidence
-```
-
-#### `detections.csv`
-
-Detection-level records:
-
-```text
-Frame
-Time_Sec
-Shrimp_ID
-Pred_Label
-Male_Conf
-ID_Status
-ID_Distance
-Include_In_Stats
-Box_X1, Box_Y1, Box_X2, Box_Y2
-```
-
-#### `time_window_summary.csv`
-
-Statistics are computed every 10 seconds based on video FPS and frame count:
-
-```text
-Start_Sec
-End_Sec
-Start_Frame
-End_Frame
-Observed_IDs
-Male
-Female
-Male_Ratio_Pct
-Detections
-Forced_ID_Rate_Pct
-```
-
-#### `reliability_summary.csv`
-
-System reliability summary generated without manual ground truth:
-
-```text
-ID_Coverage_Rate_Pct
-Enough_Evidence_Rate_Pct
-Overflow_Rate_Pct
-Overflow_Frame_Rate_Pct
-Forced_Detection_Rate_Pct
-Mean_ID_Distance
-Male_Line_Detection_Rate_Pct
-Time_Window_Male_Ratio_Std
-Keyframe_Count
-```
-
-#### `truth_template.csv`
-
-Template for manual per-shrimp labeling:
-
-```text
-Shrimp_ID
-Final_Label
-Total_Seen
-Male_Rate_Pct
-True_Label
-Notes
-```
-
-After filling `True_Label`, rerun with `--truth-csv` to generate single-frame vs multi-frame accuracy, confusion matrix, and error cases.
-
-### Figures
-
-```text
-sex_ratio_summary.png
-  Bucket-level male/female count estimate
-
-auto_total_counts.png
-  Time series of OBB-only sampled counts used for total shrimp estimation
-
-per_shrimp_male_rate.png
-  Male feature hit rate per shrimp ID
-
-temporal_sex_ratio.png
-  Male/Female/Unknown changes for each Shrimp_ID across temporal windows
-
-single_vs_multiframe_accuracy.png
-  Single-frame vs multi-frame accuracy
-
-confusion_matrix.png
-  Male/female confusion matrix including Male, Female, and Unknown system outputs
-```
-
-### Multi-Run Comparison Outputs
-
-`compare_runs.py` scans `outputs/<video_name>/analysis_<timestamp>/data/` and combines `bucket_summary.csv`, `per_shrimp_summary.csv`, `reliability_summary.csv`, and available ground-truth evaluation data.
-
-Main outputs:
-
-```text
-model_comparison_summary.csv
-  Per-run bucket results, model paths, thresholds, Unknown rate, count accuracy, macro F1, balanced accuracy, and reliability metrics
-
-per_video_performance.png
-  Stacked Pred Male / Pred Female / Unknown counts for each video or run
-
-combined_confusion_matrix.csv
-  Combined end-to-end Male/Female/Unknown confusion matrix table for runs with True_Label
-```
-
-### Evidence Keyframes
-
-Keyframes are exported to:
-
-```text
-evidence/keyframes/
-```
-
-Labels shown on images:
-
-```text
-ID1 M 0.82
-ID2 F
-OVF
-```
-
-Meaning:
-
-```text
-M      male observation
-F      female observation
-0.82   male_line confidence
-OVF    overflow, excluded from statistics
-yellow box = projected male_line detection
-```
-
-### Current Limitations
-
-- `Shrimp_ID` is a fixed-pool system-assigned review ID, not a guaranteed true biological identity.
-- Occlusion, overlap, and fast movement may still cause ID switches.
-- High `Forced_ID_Rate_Pct` indicates lower ID reliability.
-- Final sex classification should be interpreted from multi-frame statistics, not a single keyframe.
+## 注意事項
+
+- `Shrimp_ID` 是系統分配的統計 ID，不保證等於真實生物個體 ID。
+- 水中遮擋、重疊、快速移動會造成 ID switch 或 forced ID。
+- `Forced_ID_Rate_Pct` 偏高代表該 ID 統計可靠性較低。
+- 最終公母判定應看 `per_shrimp_summary.csv` 的多幀彙整與結果影片，不建議只看單一幀。
+- `preview-only` 不會建立 outputs。
+- `general_track` 與 `multi_channel_track` 會逐幀處理，速度通常比 `predict` 抽幀慢。

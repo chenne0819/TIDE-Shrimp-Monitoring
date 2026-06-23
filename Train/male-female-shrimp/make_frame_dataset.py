@@ -1,248 +1,195 @@
+from __future__ import annotations
+
 import argparse
-import random
-import re
+import shutil
 from pathlib import Path
 
 import cv2
 
 
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv"}
+DATASET_PLAN = {
+    "train": [
+        ("公蝦仰拍-1.mp4", 300),
+        ("母蝦仰拍-1.mp4", 300),
+    ],
+    "val": [
+        ("公蝦仰拍-2.mp4", 100),
+        ("母蝦仰拍-3.mp4", 100),
+    ],
+    "test": [
+        ("公母蝦仰拍-1.mp4", 200),
+    ],
+}
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Extract frames from videos and organize them into a train/val dataset."
-    )
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Extract the fixed shrimp frame_dataset split from videos.")
+    parser.add_argument("--video-dir", default="video", help="Folder that contains source videos. Default: video")
+    parser.add_argument("--output-dir", default="frame_dataset", help="Output dataset folder. Default: frame_dataset")
+    parser.add_argument("--interval", type=int, default=30, help="Save one frame every N frames. Default: 30")
+    parser.add_argument("--image-ext", choices=["jpg", "png"], default="jpg", help="Saved image format. Default: jpg")
+    parser.add_argument("--jpeg-quality", type=int, default=95, help="JPEG quality from 1 to 100. Default: 95")
+    parser.add_argument("--overwrite", action="store_true", help="Delete and recreate the output folder if it exists.")
     parser.add_argument(
-        "--video-dir",
-        default="video",
-        help="Folder that contains source videos. Default: video",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="frame_dataset",
-        help="Output dataset folder. Default: frame_dataset",
-    )
-    parser.add_argument(
-        "--interval",
-        type=int,
-        default=30,
-        help="Save one frame every N frames. Default: 30",
-    )
-    parser.add_argument(
-        "--val-ratio",
-        type=float,
-        default=0.2,
-        help="Ratio of extracted images assigned to val. Default: 0.2",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for deterministic train/val split. Default: 42",
-    )
-    parser.add_argument(
-        "--image-ext",
-        choices=["jpg", "png"],
-        default="jpg",
-        help="Saved image format. Default: jpg",
-    )
-    parser.add_argument(
-        "--jpeg-quality",
-        type=int,
-        default=95,
-        help="JPEG quality from 1 to 100. Used only when --image-ext jpg. Default: 95",
-    )
-    parser.add_argument(
-        "--layout",
-        choices=["images", "yolo", "classification"],
-        default="images",
-        help=(
-            "Dataset layout. images: train/images, val/images. "
-            "yolo: train/images, train/labels, val/images, val/labels. "
-            "classification: train/male, train/female, val/male, val/female. Default: images"
-        ),
-    )
-    parser.add_argument(
-        "--empty-labels",
+        "--allow-short",
         action="store_true",
-        help="With --layout yolo, also create an empty YOLO label .txt for every extracted image.",
+        help="Save all available interval frames when a video has fewer frames than requested.",
     )
     return parser.parse_args()
 
 
-def safe_stem(name):
-    stem = Path(name).stem.strip()
-    stem = re.sub(r'[<>:"/\\|?*]+', "_", stem)
-    stem = re.sub(r"\s+", "_", stem)
-    return stem or "video"
+def resolve_path(path: str) -> Path:
+    candidate = Path(path)
+    if candidate.exists():
+        return candidate
+    script_relative = Path(__file__).resolve().parent / path
+    if script_relative.exists():
+        return script_relative
+    return candidate
 
 
-def collect_videos(video_dir):
-    return sorted(
-        path
-        for path in Path(video_dir).iterdir()
-        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
-    )
+def prepare_output(output_dir: Path, overwrite: bool) -> None:
+    if output_dir.exists():
+        if not overwrite:
+            raise FileExistsError(f"Output already exists: {output_dir}. Use --overwrite to replace it.")
+        shutil.rmtree(output_dir)
+    for split in DATASET_PLAN:
+        (output_dir / split / "images").mkdir(parents=True, exist_ok=True)
 
 
-def infer_class_name(video_path):
-    name = video_path.stem.lower()
-    if any(token in name for token in ("母", "female", "f_")):
-        return "female"
-    if any(token in name for token in ("公", "male", "m_")):
-        return "male"
-    return "unknown"
+def count_available_frames(video_path: Path, interval: int) -> tuple[int, int]:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Cannot open video: {video_path}")
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    available = ((total_frames - 1) // interval + 1) if total_frames > 0 else 0
+    return total_frames, available
 
 
-def make_dataset_dirs(output_dir, layout):
-    output_dir = Path(output_dir)
-    if layout == "images":
-        for split in ("train", "val"):
-            (output_dir / split / "images").mkdir(parents=True, exist_ok=True)
-    elif layout == "classification":
-        for split in ("train", "val"):
-            for class_name in ("male", "female", "unknown"):
-                (output_dir / split / class_name).mkdir(parents=True, exist_ok=True)
-    elif layout == "yolo":
-        for split in ("train", "val"):
-            (output_dir / split / "images").mkdir(parents=True, exist_ok=True)
-            (output_dir / split / "labels").mkdir(parents=True, exist_ok=True)
-    return output_dir
+def validate_plan(video_dir: Path, interval: int, allow_short: bool) -> None:
+    problems = []
+    for split, items in DATASET_PLAN.items():
+        for video_name, target_count in items:
+            video_path = video_dir / video_name
+            if not video_path.exists():
+                problems.append(f"{split}: missing video {video_path}")
+                continue
+            total_frames, available = count_available_frames(video_path, interval)
+            if available < target_count:
+                problems.append(
+                    f"{split}: {video_name} needs {target_count} images, but only {available} "
+                    f"are available from {total_frames} frames with interval {interval}."
+                )
+    if problems and not allow_short:
+        joined = "\n".join(f"- {item}" for item in problems)
+        raise ValueError(
+            "The requested frame_dataset cannot be created exactly.\n"
+            f"{joined}\n"
+            "Use --allow-short to export the available frames, or reduce --interval / target counts."
+        )
+    for problem in problems:
+        print(f"[WARN] {problem}")
 
 
-def choose_split(rng, val_ratio):
-    return "val" if rng.random() < val_ratio else "train"
-
-
-def write_image(path, frame, image_ext, jpeg_quality):
+def write_image(path: Path, frame, image_ext: str, jpeg_quality: int) -> bool:
     encode_ext = ".jpg" if image_ext == "jpg" else ".png"
-    params = []
-    if image_ext == "jpg":
-        params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
-
+    params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality] if image_ext == "jpg" else []
     ok, encoded = cv2.imencode(encode_ext, frame, params)
     if not ok:
         return False
-
     encoded.tofile(str(path))
     return path.exists() and path.stat().st_size > 0
 
 
-def get_image_dir(output_dir, split, layout, class_name):
-    if layout == "images":
-        return output_dir / split / "images"
-    if layout == "classification":
-        return output_dir / split / class_name
-    if layout == "yolo":
-        return output_dir / split / "images"
-    raise ValueError(f"Unsupported layout: {layout}")
-
-
 def extract_video(
-    video_path,
-    output_dir,
-    interval,
-    val_ratio,
-    rng,
-    image_ext,
-    jpeg_quality,
-    layout,
-    empty_labels,
-):
+    video_path: Path,
+    output_images_dir: Path,
+    split: str,
+    target_count: int,
+    interval: int,
+    image_ext: str,
+    jpeg_quality: int,
+    allow_short: bool,
+) -> dict[str, int]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        print(f"[WARN] Cannot open video: {video_path}")
-        return {"saved": 0, "failed": 0, "frames": 0}
+        raise FileNotFoundError(f"Cannot open video: {video_path}")
 
-    video_name = safe_stem(video_path.name)
-    class_name = infer_class_name(video_path)
-    frame_index = 0
-    saved_index = 0
+    saved = 0
     failed = 0
+    frame_idx = 0
+    video_stem = video_path.stem
 
-    while True:
+    while saved < target_count:
+        source_frame = saved * interval
+        cap.set(cv2.CAP_PROP_POS_FRAMES, source_frame)
         ok, frame = cap.read()
         if not ok:
-            break
+            if allow_short:
+                break
+            raise RuntimeError(f"{video_path.name}: cannot read frame {source_frame}")
 
-        if frame_index % interval == 0:
-            split = choose_split(rng, val_ratio)
-            image_name = f"{video_name}_{saved_index:05d}.{image_ext}"
-            image_dir = get_image_dir(output_dir, split, layout, class_name)
-            image_dir.mkdir(parents=True, exist_ok=True)
-            image_path = image_dir / image_name
+        image_name = f"{split}_{video_stem}_frame_{source_frame:08d}.{image_ext}"
+        image_path = output_images_dir / image_name
+        if write_image(image_path, frame, image_ext, jpeg_quality):
+            saved += 1
+        else:
+            failed += 1
+            print(f"[WARN] Failed to write image: {image_path}")
 
-            if write_image(image_path, frame, image_ext, jpeg_quality):
-                if layout == "yolo" and empty_labels:
-                    label_path = output_dir / split / "labels" / f"{video_name}_{saved_index:05d}.txt"
-                    label_path.write_text("", encoding="utf-8")
-                saved_index += 1
-            else:
-                failed += 1
-                print(f"[WARN] Failed to write image: {image_path}")
-
-        frame_index += 1
+        frame_idx = source_frame
 
     cap.release()
-    return {"saved": saved_index, "failed": failed, "frames": frame_index}
+    return {"saved": saved, "failed": failed, "last_frame": frame_idx}
 
 
-def main():
+def main() -> None:
     args = parse_args()
-
     if args.interval <= 0:
         raise ValueError("--interval must be greater than 0")
-    if not 0 <= args.val_ratio <= 1:
-        raise ValueError("--val-ratio must be between 0 and 1")
     if not 1 <= args.jpeg_quality <= 100:
         raise ValueError("--jpeg-quality must be between 1 and 100")
 
-    video_dir = Path(args.video_dir)
+    video_dir = resolve_path(args.video_dir)
     if not video_dir.exists():
         raise FileNotFoundError(f"Video folder not found: {video_dir}")
 
-    videos = collect_videos(video_dir)
-    if not videos:
-        raise FileNotFoundError(f"No videos found in: {video_dir}")
+    output_dir = resolve_path(args.output_dir)
+    validate_plan(video_dir, args.interval, args.allow_short)
+    prepare_output(output_dir, args.overwrite)
 
-    output_dir = make_dataset_dirs(args.output_dir, args.layout)
-    rng = random.Random(args.seed)
+    totals = {split: 0 for split in DATASET_PLAN}
+    failures = 0
+    print(f"Video folder: {video_dir}")
+    print(f"Output folder: {output_dir}")
+    print(f"Interval: every {args.interval} frames")
 
-    total_saved = 0
-    total_failed = 0
-
-    print(f"Found {len(videos)} video(s) in {video_dir}")
-    print(f"Output dataset: {output_dir}")
-    print(f"Layout: {args.layout}")
-    print(f"Saving every {args.interval} frame(s), val ratio: {args.val_ratio}")
-
-    for video_path in videos:
-        result = extract_video(
-            video_path=video_path,
-            output_dir=output_dir,
-            interval=args.interval,
-            val_ratio=args.val_ratio,
-            rng=rng,
-            image_ext=args.image_ext,
-            jpeg_quality=args.jpeg_quality,
-            layout=args.layout,
-            empty_labels=args.empty_labels,
-        )
-        total_saved += result["saved"]
-        total_failed += result["failed"]
-        print(
-            f"{video_path.name}: read {result['frames']} frame(s), "
-            f"saved {result['saved']} image(s), failed {result['failed']}"
-        )
-
-    train_count = len(list((output_dir / "train").rglob(f"*.{args.image_ext}")))
-    val_count = len(list((output_dir / "val").rglob(f"*.{args.image_ext}")))
+    for split, items in DATASET_PLAN.items():
+        output_images_dir = output_dir / split / "images"
+        for video_name, target_count in items:
+            result = extract_video(
+                video_path=video_dir / video_name,
+                output_images_dir=output_images_dir,
+                split=split,
+                target_count=target_count,
+                interval=args.interval,
+                image_ext=args.image_ext,
+                jpeg_quality=args.jpeg_quality,
+                allow_short=args.allow_short,
+            )
+            totals[split] += result["saved"]
+            failures += result["failed"]
+            print(
+                f"{split}/{video_name}: saved {result['saved']} image(s), "
+                f"failed {result['failed']}, last frame {result['last_frame']}"
+            )
 
     print("\nDone.")
-    print(f"Total saved: {total_saved}, failed: {total_failed}")
-    print(f"train/images: {train_count}")
-    print(f"val/images: {val_count}")
+    print(f"train/images: {totals['train']}")
+    print(f"val/images: {totals['val']}")
+    print(f"test/images: {totals['test']}")
+    print(f"failed writes: {failures}")
 
 
 if __name__ == "__main__":

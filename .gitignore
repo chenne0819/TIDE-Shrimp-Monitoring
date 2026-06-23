@@ -1,5 +1,36 @@
 .venv
 __pycache__
+.agents
+.codex
+
+# Local datasets, model weights, and training artifacts.
+**/*.7z
+**/*.pt
+**/*.onnx
+**/*.engine
+**/*.tflite
+**/*.pth
+**/*.pb
+**/*.weights
+**/*.mp4
+**/*.avi
+**/*.mov
+**/*.mkv
+**/*.npy
+**/*.cache
+Train/male-female-shrimp/**/*dataset*/
+Train/male-female-shrimp/**/shrimp_temporal_*/
+Train/male-female-shrimp/**/runs/
+general_track/outputs/
+multi_channel_track/outputs/
+predict/outputs/
+general_track/**/*.csv
+multi_channel_track/**/*.csv
+predict/**/*.csv
+general_track/**/*.png
+multi_channel_track/**/*.png
+predict/**/*.png
+
 # 權重與模型檔案
 # **/*.pt
 # **/*.onnx
@@ -16,7 +47,7 @@ __pycache__
 # **/*.mkv
 
 # 視覺化輸出 (如果你不想備份圖表和 JSON)
-*蝦*/
+
 
 # Ultralytics 產生的訓練日誌 (runs/)
 runs

@@ -1,0 +1,7 @@
+train: ./shrimp_temporal_stacks_3frame_dataset/train/images
+val: ./shrimp_temporal_stacks_3frame_dataset/val/images
+test: ./shrimp_temporal_stacks_3frame_dataset/test/images
+
+channels: 9
+nc: 1
+names: ['male_line']

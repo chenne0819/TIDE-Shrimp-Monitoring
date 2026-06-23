@@ -1,32 +1,64 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
 import ultralytics
 from ultralytics import YOLO
-import os
 
-# 1. 確保環境
-ultralytics.checks()
 
-# 設定路徑
-DATA_YAML = 'data.yaml'
-MODEL_PATH = 'yolo11m-obb.pt' 
+DATA_YAML = "data.yaml"
+DATASET_ROOT = "shrimp_OBB_dataset_2"
+MODEL_PATH = "../../yolo11m-obb.pt"
 
-if __name__ == '__main__':
-    # 2. 載入模型
-    model = YOLO(MODEL_PATH)
-    
-    print("🚀 開始執行【蝦子定位裁切專用】單一類別訓練...")
 
-    # 3. 執行訓練
-    results = model.train(
-        data=DATA_YAML,
-        device=0,
-        epochs=300,        
-        imgsz=960,         
-        batch=8,           
-        name='traindata20260602_公母蝦_obb_1',
-        exist_ok=True,
-        degrees=180.0,    # 隨機旋轉，這對 OBB 模型是必備的核心增強
-        flipud=0.5,       # 上下翻轉
-        fliplr=0.5        # 左右翻轉
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train OBB shrimp model with YOLO native augmentations.")
+    parser.add_argument("--data", default=DATA_YAML, help=f"Dataset yaml. Default: {DATA_YAML}")
+    parser.add_argument("--dataset", default=DATASET_ROOT, help=f"YOLO dataset folder. Default: {DATASET_ROOT}")
+    parser.add_argument("--model", default=MODEL_PATH, help=f"Base YOLO model. Default: {MODEL_PATH}")
+    parser.add_argument("--name", default="traindata_obb_dataset2_yolo11m", help="Ultralytics run name.")
+    parser.add_argument("--epochs", type=int, default=200, help="Training epochs. Default: 200")
+    parser.add_argument("--imgsz", type=int, default=640, help="Image size. Default: 960")
+    parser.add_argument("--batch", type=int, default=8, help="Batch size. Default: 8")
+    parser.add_argument("--device", default="0", help="CUDA device. Default: 0")
+    parser.add_argument("--exist-ok", default=True, help="Allow reusing the same YOLO run name.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    ultralytics.checks()
+
+    dataset_root = Path(args.dataset)
+    if not dataset_root.exists():
+        raise FileNotFoundError(f"Dataset not found: {dataset_root}")
+
+    model = YOLO(args.model)
+
+    model.train(
+        data=args.data,
+        device=args.device,
+        epochs=args.epochs,
+        imgsz=args.imgsz,
+        batch=args.batch,
+        name=args.name,
+        cache='disk',
+        exist_ok=args.exist_ok,
+        classes=[0],
+        hsv_s=1.0,
+        hsv_v=0.5,
+        degrees=180,
+        shear=5,
+        perspective=0.0005,
+        flipud=0.5,
+        bgr=0.5,
+        mixup=0.5,
+        cutmix=0.5,
     )
 
-    print(f"✅ 訓練完成!")
+    print("OBB training complete.")
+
+
+if __name__ == "__main__":
+    main()

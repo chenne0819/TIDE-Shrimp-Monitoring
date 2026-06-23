@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 
-import cv2
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -23,8 +22,9 @@ class ReportWriter:
         self.run_dir = os.path.abspath(os.path.join(output_root, video_name, f"analysis_{run_id}"))
         self.data_dir = os.path.join(self.run_dir, "data")
         self.figure_dir = os.path.join(self.run_dir, "figures")
-        self.keyframe_dir = os.path.join(self.run_dir, "evidence", "keyframes")
-        for path in (self.data_dir, self.figure_dir, self.keyframe_dir):
+        self.video_dir = os.path.join(self.run_dir, "videos")
+        self.result_video_path = os.path.join(self.video_dir, "result_video.mp4")
+        for path in (self.data_dir, self.figure_dir, self.video_dir):
             os.makedirs(path, exist_ok=True)
 
     def write_all(
@@ -36,10 +36,13 @@ class ReportWriter:
         evaluation: dict,
         error_cases: pd.DataFrame,
         keyframes: list[dict],
+        result_video_path: str | None = None,
         auto_total_counts: pd.DataFrame | None = None,
         auto_total_summary: dict | None = None,
     ) -> dict:
         paths = {}
+        if result_video_path and os.path.exists(result_video_path):
+            paths["result_video"] = result_video_path
         paths["detections"] = self._write_csv(detections, "detections.csv")
         paths["per_shrimp"] = self._write_csv(per_shrimp, "per_shrimp_summary.csv")
         paths["truth_template"] = self._write_truth_template(per_shrimp)
@@ -47,13 +50,13 @@ class ReportWriter:
         paths["time_windows"] = self._write_csv(time_windows, "time_window_summary.csv")
         paths["evaluation"] = self._write_csv(pd.DataFrame([evaluation]), "evaluation_summary.csv")
         paths["error_cases"] = self._write_csv(error_cases, "error_cases.csv")
-        paths["keyframes"] = self._write_keyframes(keyframes)
-        paths["keyframe_index"] = self._write_csv(pd.DataFrame(keyframes).drop(columns=["Image"], errors="ignore"), "keyframe_index.csv")
         reliability = self._build_reliability_summary(detections, per_shrimp, time_windows, keyframes)
         paths["reliability_summary"] = self._write_csv(pd.DataFrame([reliability]), "reliability_summary.csv")
         paths["ratio_chart"] = self._plot_ratio(summary)
         paths["shrimp_chart"] = self._plot_per_shrimp(per_shrimp)
+        paths["shrimp_count_chart"] = self._plot_per_shrimp_counts(per_shrimp)
         paths["temporal_chart"] = self._plot_temporal(detections, per_shrimp, time_windows)
+        paths["id_probability_chart"] = self._plot_id_probability_lines(detections, per_shrimp, time_windows)
         if auto_total_counts is not None and auto_total_summary is not None:
             paths["auto_total_counts"] = self._write_csv(auto_total_counts, "auto_total_counts.csv")
             paths["auto_total_summary"] = self._write_csv(pd.DataFrame([auto_total_summary]), "auto_total_summary.csv")
@@ -133,56 +136,88 @@ class ReportWriter:
             "Time_Window_Male_Ratio_Std": round(float(male_ratio.std()), 2) if len(male_ratio.dropna()) > 1 else 0.0,
             "Time_Window_Male_Ratio_Range": round(float(male_ratio.max() - male_ratio.min()), 2) if not male_ratio.dropna().empty else 0.0,
             "Mean_Observed_IDs_Per_Window": round(float(nonempty_windows["Observed_IDs"].mean()), 2) if "Observed_IDs" in nonempty_windows.columns and not nonempty_windows.empty else 0.0,
-            "Keyframe_Count": int(len(keyframes)),
+            "Keyframe_Count": 0,
         }
-
-    def _write_keyframes(self, keyframes: list[dict]) -> list[str]:
-        paths = []
-        for idx, item in enumerate(keyframes, start=1):
-            path = os.path.join(self.keyframe_dir, f"keyframe_{idx:02d}_frame_{item['Frame']:06d}.jpg")
-            cv2.imwrite(path, item["Image"])
-            item["Image_Path"] = path
-            paths.append(path)
-        return paths
 
     def _plot_ratio(self, summary: dict) -> str:
         path = os.path.join(self.figure_dir, "sex_ratio_summary.png")
-        fig, ax = plt.subplots(figsize=(7, 5), facecolor="white")
+        fig, ax = plt.subplots(figsize=(8.5, 5.8), facecolor="white", constrained_layout=True)
         labels = ["公蝦", "母蝦", "未定"]
         values = [summary["Pred_Male"], summary["Pred_Female"], summary["Unknown"]]
         colors = ["#2F6FDB", "#D94F70", "#8A8F98"]
         ax.bar(labels, values, color=colors)
-        ax.set_title("草蝦公母數量估計", fontsize=14, fontweight="bold")
-        ax.set_ylabel("數量")
+        ax.set_title("草蝦公母數量估計", fontsize=16, fontweight="bold", pad=16)
+        ax.set_ylabel("數量", labelpad=10)
+        ax.tick_params(axis="both", labelsize=11)
+        ax.grid(axis="y", alpha=0.22)
         for i, value in enumerate(values):
-            ax.text(i, value + 0.05, str(value), ha="center", va="bottom")
-        plt.tight_layout()
+            ax.text(i, value + max(values + [1]) * 0.035, str(value), ha="center", va="bottom", fontsize=11)
         plt.savefig(path, dpi=300, bbox_inches="tight")
         plt.close()
         return path
 
     def _plot_per_shrimp(self, per_shrimp: pd.DataFrame) -> str:
         path = os.path.join(self.figure_dir, "per_shrimp_male_rate.png")
-        fig, ax = plt.subplots(figsize=(9, 5), facecolor="white")
+        fig, ax = plt.subplots(figsize=(11.5, 6.4), facecolor="white", constrained_layout=True)
         colors = ["#2F6FDB" if v == "Male" else "#D94F70" if v == "Female" else "#8A8F98" for v in per_shrimp["Final_Label"]]
         x = [f"ID{sid}" for sid in per_shrimp["Shrimp_ID"]]
         ax.bar(x, per_shrimp["Male_Rate_Pct"], color=colors)
         threshold_pct = MALE_RATE_THRESHOLD * 100
         ax.axhline(threshold_pct, color="#222222", linestyle="--", label=f"公蝦判定門檻 {threshold_pct:.0f}%")
-        ax.set_ylim(0, 112)
-        ax.set_title("每隻蝦為公蝦的概率", fontsize=14, fontweight="bold")
-        ax.set_xlabel("系統分配 ID")
-        ax.set_ylabel("為公蝦的概率 (%)")
-        ax.legend()
+        ax.set_ylim(0, 115)
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
+        ax.set_title("每隻蝦為公蝦的概率", fontsize=16, fontweight="bold", pad=16)
+        ax.set_xlabel("系統分配 ID", labelpad=10)
+        ax.set_ylabel("為公蝦的概率 (%)", labelpad=10)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(axis="y", alpha=0.22)
+        ax.legend(loc="upper right", frameon=True)
         for i, row in per_shrimp.iterrows():
             ax.text(
                 i,
-                min(float(row["Male_Rate_Pct"]) + 2, 106),
-                f"male_line={int(row['Male_Hits'])}\nn={int(row['Total_Seen'])}",
+                min(float(row["Male_Rate_Pct"]) + 3, 108),
+                f"{int(row['Male_Hits'])}/{int(row['Total_Seen'])}",
                 ha="center",
-                fontsize=8,
+                fontsize=9,
             )
-        plt.tight_layout()
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        plt.close()
+        return path
+
+    def _plot_per_shrimp_counts(self, per_shrimp: pd.DataFrame) -> str:
+        path = os.path.join(self.figure_dir, "per_shrimp_detection_counts.png")
+        fig, ax = plt.subplots(figsize=(12, 6.4), facecolor="white", constrained_layout=True)
+        if per_shrimp.empty:
+            ax.set_title("每個 ID 的辨識次數與公蝦性徵次數", fontsize=16, fontweight="bold", pad=16)
+            ax.axis("off")
+            plt.savefig(path, dpi=300, bbox_inches="tight")
+            plt.close()
+            return path
+
+        x = np.arange(len(per_shrimp))
+        width = 0.36
+        total_seen = per_shrimp["Total_Seen"].astype(float)
+        male_hits = per_shrimp["Male_Hits"].astype(float)
+        ax.bar(x - width / 2, male_hits, width, label="公蝦性徵總次數", color="#2F6FDB")
+        ax.bar(x + width / 2, total_seen, width, label="被辨識的總次數", color="#8A8F98")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"ID{sid}" for sid in per_shrimp["Shrimp_ID"]])
+        ax.set_title("每個 ID 的辨識次數與公蝦性徵次數", fontsize=16, fontweight="bold", pad=16)
+        ax.set_xlabel("Shrimp_ID", labelpad=10)
+        ax.set_ylabel("次數", labelpad=10)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.legend(loc="upper right", frameon=True)
+        ax.grid(axis="y", alpha=0.25)
+
+        for idx, row in per_shrimp.iterrows():
+            seen = float(row["Total_Seen"])
+            hits = float(row["Male_Hits"])
+            pct = hits / seen * 100 if seen else 0.0
+            ax.text(idx - width / 2, hits + 0.2, f"{int(hits)}\n{pct:.0f}%", ha="center", va="bottom", fontsize=8)
+            ax.text(idx + width / 2, seen + 0.2, f"{int(seen)}", ha="center", va="bottom", fontsize=9)
+
+        ymax = max(float(total_seen.max()), float(male_hits.max()), 1.0)
+        ax.set_ylim(0, ymax * 1.28)
         plt.savefig(path, dpi=300, bbox_inches="tight")
         plt.close()
         return path
@@ -269,9 +304,90 @@ class ReportWriter:
         plt.close()
         return path
 
+    def _plot_id_probability_lines(self, detections: pd.DataFrame, per_shrimp: pd.DataFrame, time_windows: pd.DataFrame) -> str:
+        path = os.path.join(self.figure_dir, "per_id_male_probability_10s.png")
+        shrimp_ids = per_shrimp["Shrimp_ID"].astype(int).tolist() if "Shrimp_ID" in per_shrimp.columns else []
+        max_time = float(detections["Time_Sec"].max()) if not detections.empty and "Time_Sec" in detections.columns else 0.0
+        fig_w = max(12.0, (max_time / 10.0 + 1.0) * 0.95)
+        fig_h = max(6.4, len(shrimp_ids) * 0.18 + 5.5)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), facecolor="white", constrained_layout=True)
+        if detections.empty or not shrimp_ids:
+            ax.set_title("逐幀各 ID 為公蝦機率變化", fontsize=16, fontweight="bold", pad=16)
+            ax.axis("off")
+            plt.savefig(path, dpi=300, bbox_inches="tight")
+            plt.close()
+            return path
+
+        df = detections.copy()
+        if "Include_In_Stats" in df.columns:
+            df = df[df["Include_In_Stats"] == True].copy()
+        if df.empty:
+            ax.axis("off")
+            plt.savefig(path, dpi=300, bbox_inches="tight")
+            plt.close()
+            return path
+
+        id_colors = {
+            shrimp_id: mcolors.hsv_to_rgb((idx / max(len(shrimp_ids), 1), 0.76, 0.78))
+            for idx, shrimp_id in enumerate(shrimp_ids)
+        }
+        max_time = float(df["Time_Sec"].max()) if "Time_Sec" in df.columns and not df.empty else 0.0
+        tick_end = int(np.ceil(max_time / 10.0) * 10)
+        x_ticks = list(range(0, max(tick_end, 10) + 1, 10))
+
+        for shrimp_id in shrimp_ids:
+            group = df[df["Shrimp_ID"] == shrimp_id].sort_values(["Time_Sec", "Frame"])
+            if group.empty:
+                continue
+            x = group["Time_Sec"].astype(float).to_numpy()
+            if "Vote_Male_Rate_Pct" in group.columns:
+                y = pd.to_numeric(group["Vote_Male_Rate_Pct"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            else:
+                y = (group["Pred_Label"] == "Male").astype(float).to_numpy() * 100.0
+
+            ax.plot(x, y, linewidth=1.8, color=id_colors[shrimp_id], label=f"ID{shrimp_id}")
+
+            marker_indices = []
+            for tick in x_ticks:
+                if len(x) == 0:
+                    continue
+                nearest_idx = int(np.argmin(np.abs(x - float(tick))))
+                if abs(float(x[nearest_idx]) - float(tick)) <= 5.0:
+                    marker_indices.append(nearest_idx)
+            marker_indices = sorted(set(marker_indices))
+            if marker_indices:
+                ax.scatter(
+                    x[marker_indices],
+                    y[marker_indices],
+                    s=24,
+                    color=id_colors[shrimp_id],
+                    edgecolors="white",
+                    linewidths=0.6,
+                    zorder=3,
+                )
+
+        threshold_pct = MALE_RATE_THRESHOLD * 100
+        ax.axhline(threshold_pct, color="#222222", linestyle="--", linewidth=1.2, label=f"公蝦門檻 {threshold_pct:.0f}%")
+        ax.axhline(25, color="#8A8F98", linestyle=":", linewidth=1.1, label="Obs 下限 25%")
+        ax.set_ylim(0, 100)
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
+        ax.set_xlim(0, max(float(tick_end), max_time, 10.0))
+        ax.set_xticks(x_ticks)
+        ax.set_xticklabels([f"{tick}s" for tick in x_ticks], rotation=45, ha="right")
+        ax.set_title("逐幀各 ID 為公蝦機率變化", fontsize=16, fontweight="bold", pad=16)
+        ax.set_xlabel("影片時間", labelpad=12)
+        ax.set_ylabel("為公蝦的機率 (%)", labelpad=12)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(True, alpha=0.25)
+        legend_cols = 1 if len(shrimp_ids) <= 12 else 2
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), ncol=legend_cols, frameon=True, fontsize=9)
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        plt.close()
+        return path
+
     def _plot_auto_total(self, counts: pd.DataFrame, summary: dict) -> str:
         path = os.path.join(self.figure_dir, "auto_total_counts.png")
-        fig, ax = plt.subplots(figsize=(7.2, 4.8), facecolor="white", constrained_layout=True)
+        fig, ax = plt.subplots(figsize=(9.5, 5.8), facecolor="white", constrained_layout=True)
         if not counts.empty:
             count_values = counts["OBB_Detection_Count"].astype(int)
             recommended = int(summary["Recommended_Total_Shrimp"])
@@ -282,9 +398,10 @@ class ReportWriter:
                 pct = frames / max(len(count_values), 1) * 100
                 ax.text(i, frames + max(dist.values) * 0.02, f"n={frames}\n{pct:.1f}%", ha="center", va="bottom", fontsize=9)
             ax.set_ylim(0, max(dist.values) * 1.18)
-        ax.set_title("自動估計蝦子總數：OBB 偵測數分布", fontsize=14, fontweight="bold")
-        ax.set_xlabel("每個抽樣幀偵測到的蝦子數")
-        ax.set_ylabel("抽樣幀數")
+        ax.set_title("自動估計蝦子總數：OBB 偵測數分布", fontsize=16, fontweight="bold", pad=16)
+        ax.set_xlabel("每個抽樣幀偵測到的蝦子數", labelpad=10)
+        ax.set_ylabel("抽樣幀數", labelpad=10)
+        ax.tick_params(axis="both", labelsize=10)
         ax.grid(axis="y", alpha=0.25)
         text = (
             f"P{summary['Percentile_Used']:.0f}={summary['Percentile_Count']} | "
@@ -304,14 +421,16 @@ class ReportWriter:
             float(evaluation.get("Single_Frame_Accuracy_Pct", 0) or 0),
             float(evaluation.get("Multi_Frame_Accuracy_Pct", 0) or 0),
         ]
-        fig, ax = plt.subplots(figsize=(6.5, 5), facecolor="white")
+        fig, ax = plt.subplots(figsize=(8, 5.8), facecolor="white", constrained_layout=True)
         ax.bar(labels, values, color=["#8A8F98", "#2E7D32"])
         ax.set_ylim(0, 100)
-        ax.set_title("單幀與多幀辨識成效比較", fontsize=14, fontweight="bold")
-        ax.set_ylabel("Accuracy (%)")
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
+        ax.set_title("單幀與多幀辨識成效比較", fontsize=16, fontweight="bold", pad=16)
+        ax.set_ylabel("Accuracy (%)", labelpad=10)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(axis="y", alpha=0.22)
         for i, value in enumerate(values):
-            ax.text(i, value + 1, f"{value:.1f}%", ha="center")
-        plt.tight_layout()
+            ax.text(i, value + 1.5, f"{value:.1f}%", ha="center", fontsize=11)
         plt.savefig(path, dpi=300, bbox_inches="tight")
         plt.close()
         return path
@@ -334,7 +453,7 @@ class ReportWriter:
     def _plot_confusion_matrix(self, per_shrimp: pd.DataFrame) -> str:
         path = os.path.join(self.figure_dir, "confusion_matrix.png")
         cm = self._confusion_df(per_shrimp)
-        fig, ax = plt.subplots(figsize=(5.5, 5), facecolor="white")
+        fig, ax = plt.subplots(figsize=(6.5, 5.8), facecolor="white", constrained_layout=True)
         if not cm.empty:
             im = ax.imshow(cm.values, cmap="Blues")
             ax.set_xticks(range(len(cm.columns)))
@@ -345,10 +464,10 @@ class ReportWriter:
                 for j in range(cm.shape[1]):
                     ax.text(j, i, str(cm.values[i, j]), ha="center", va="center")
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title("公母辨識混淆矩陣", fontsize=14, fontweight="bold")
-        ax.set_xlabel("系統判定")
-        ax.set_ylabel("人工標註")
-        plt.tight_layout()
+        ax.set_title("公母辨識混淆矩陣", fontsize=16, fontweight="bold", pad=16)
+        ax.set_xlabel("系統判定", labelpad=10)
+        ax.set_ylabel("人工標註", labelpad=10)
+        ax.tick_params(axis="both", labelsize=10)
         plt.savefig(path, dpi=300, bbox_inches="tight")
         plt.close()
         return path
