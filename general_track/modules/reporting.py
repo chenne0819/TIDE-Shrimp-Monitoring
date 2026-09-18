@@ -10,7 +10,10 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from .config import MALE_RATE_THRESHOLD, MIN_OBSERVATIONS_PER_SHRIMP
+from .config import MIN_OBSERVATIONS_PER_SHRIMP
+
+
+LEGACY_MALE_CUTOFF = 0.93327
 
 
 plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei", "SimHei", "Arial Unicode MS", "Arial"]
@@ -162,7 +165,7 @@ class ReportWriter:
         colors = ["#2F6FDB" if v == "Male" else "#D94F70" if v == "Female" else "#8A8F98" for v in per_shrimp["Final_Label"]]
         x = [f"ID{sid}" for sid in per_shrimp["Shrimp_ID"]]
         ax.bar(x, per_shrimp["Male_Rate_Pct"], color=colors)
-        threshold_pct = MALE_RATE_THRESHOLD * 100
+        threshold_pct = LEGACY_MALE_CUTOFF * 100
         ax.axhline(threshold_pct, color="#222222", linestyle="--", label=f"公蝦判定門檻 {threshold_pct:.0f}%")
         ax.set_ylim(0, 115)
         ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
@@ -262,7 +265,7 @@ class ReportWriter:
                 if seen < MIN_OBSERVATIONS_PER_SHRIMP:
                     matrix[row_idx, col_idx] = 3
                     labels[row_idx][col_idx] = f"U\nn={seen}"
-                elif male_rate >= MALE_RATE_THRESHOLD:
+                elif male_rate >= LEGACY_MALE_CUTOFF:
                     matrix[row_idx, col_idx] = 1
                     labels[row_idx][col_idx] = f"M\n{male_hits}/{seen}"
                 else:
@@ -366,7 +369,7 @@ class ReportWriter:
                     zorder=3,
                 )
 
-        threshold_pct = MALE_RATE_THRESHOLD * 100
+        threshold_pct = LEGACY_MALE_CUTOFF * 100
         ax.axhline(threshold_pct, color="#222222", linestyle="--", linewidth=1.2, label=f"公蝦門檻 {threshold_pct:.0f}%")
         ax.axhline(25, color="#8A8F98", linestyle=":", linewidth=1.1, label="Obs 下限 25%")
         ax.set_ylim(0, 100)
@@ -471,3 +474,5 @@ class ReportWriter:
         plt.savefig(path, dpi=300, bbox_inches="tight")
         plt.close()
         return path
+
+

@@ -56,14 +56,21 @@ def build_classifier_model(model_name: str, num_classes: int):
 
 
 class MaleLineCNNClassifier:
-    def __init__(self, model_path: str, threshold: float = 0.5, device: str | None = None) -> None:
+    def __init__(self, model_path: str, threshold: float | None = None, device: str | None = None) -> None:
         self.model_path = Path(model_path)
         if not self.model_path.exists():
             raise FileNotFoundError(f"CNN model not found: {self.model_path}")
 
-        self.threshold = float(threshold)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         checkpoint = torch.load(self.model_path, map_location=self.device)
+        checkpoint_threshold = (
+            checkpoint.get("threshold")
+            or checkpoint.get("confidence_threshold")
+            or checkpoint.get("male_line_threshold")
+            or checkpoint.get("best_threshold")
+            or 0.5
+        )
+        self.threshold = float(checkpoint_threshold if threshold is None else threshold)
         self.model_name = checkpoint.get("model", "tiny_cnn")
         self.class_to_idx = checkpoint.get("class_to_idx", {"male_line": 0, "no_male_line": 1})
         self.image_size = int(checkpoint.get("image_size", 32))

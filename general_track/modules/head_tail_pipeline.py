@@ -1,28 +1,73 @@
 from __future__ import annotations
 
-import csv
 import pickle
 from collections import Counter, defaultdict
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
+from torch import nn
 from torchvision import models
+from torchvision.ops import FeaturePyramidNetwork
 from tqdm import tqdm
 from ultralytics import YOLO
 
 from .config import (
     IMGSZ_OBB,
     MODEL_HEAD_TAIL_OBB_PATH,
-    MODEL_SEX_CLASSIFIER_PATH,
+    MODEL_YOLO_CLS_PATH,
 )
-from .obb_track import extract_obb_track_id
+from .head_tail_common import (
+    associated_centers,
+    combine_preview,
+    crop_classifier_region,
+    debug_video_size as make_debug_video_size,
+    fit_preview_to_screen,
+    letterbox,
+    obb_rows,
+    orient_head_left,
+    rectify_shrimp,
+    show_preview_or_raise,
+    split_head_tail_rows,
+    validate_head_tail_obb_model,
+    write_csv,
+)
 
 
-REQUIRED_OBB_CLASSES = {"shrimp", "shrimp_head", "shrimp_tail"}
 REQUIRED_SEX_CLASSES = {"female", "male"}
+
+
+class ResNet50FPNClassifier(nn.Module):
+    def __init__(self, num_classes: int, dropout: float = 0.5, fpn_channels: int = 256) -> None:
+        super().__init__()
+        resnet = models.resnet50(weights=None)
+        self.stem = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
+        self.fpn = FeaturePyramidNetwork(
+            in_channels_list=[256, 512, 1024, 2048],
+            out_channels=fpn_channels,
+        )
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(fpn_channels * 4, num_classes),
+        )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        x = self.stem(inputs)
+        c2 = self.layer1(x)
+        c3 = self.layer2(c2)
+        c4 = self.layer3(c3)
+        c5 = self.layer4(c4)
+        features = self.fpn(OrderedDict([("c2", c2), ("c3", c3), ("c4", c4), ("c5", c5)]))
+        pooled = [self.pool(features[name]).flatten(1) for name in ("c2", "c3", "c4", "c5")]
+        return self.classifier(torch.cat(pooled, dim=1))
 
 
 class ShrimpSexClassifier:
@@ -47,10 +92,18 @@ class ShrimpSexClassifier:
             model = models.resnet34(weights=None)
         elif self.architecture == "resnet50":
             model = models.resnet50(weights=None)
+        elif self.architecture == "resnet50_fpn":
+            model = ResNet50FPNClassifier(
+                num_classes=len(self.class_to_idx),
+                dropout=float(checkpoint.get("dropout", 0.5)),
+                fpn_channels=int(checkpoint.get("fpn_channels", 256)),
+            )
         else:
             raise ValueError(f"Unsupported classifier architecture: {self.architecture}")
         state_dict = checkpoint["model_state"]
-        if "fc.1.weight" in state_dict:
+        if self.architecture == "resnet50_fpn":
+            pass
+        elif "fc.1.weight" in state_dict:
             model.fc = torch.nn.Sequential(
                 torch.nn.Dropout(float(checkpoint.get("dropout", 0.5))),
                 torch.nn.Linear(model.fc.in_features, len(self.class_to_idx)),
@@ -120,111 +173,16 @@ def load_sex_classifier(model_path: str):
             raise resnet_error
 
 
-def _order_points(points: np.ndarray) -> np.ndarray:
-    """Return minAreaRect vertices in top-left, top-right, bottom-right, bottom-left order."""
-    points = np.asarray(points, dtype=np.float32).reshape(4, 2)
-    ordered = np.zeros((4, 2), dtype=np.float32)
-    sums = points.sum(axis=1)
-    differences = np.diff(points, axis=1).reshape(-1)
-    ordered[0] = points[np.argmin(sums)]
-    ordered[2] = points[np.argmax(sums)]
-    ordered[1] = points[np.argmin(differences)]
-    ordered[3] = points[np.argmax(differences)]
-    return ordered
-
-
-def rectify_shrimp(frame: np.ndarray, shrimp_polygon: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Rectify a shrimp OBB using minAreaRect, getPerspectiveTransform and warpPerspective."""
-    polygon = np.asarray(shrimp_polygon, dtype=np.float32).reshape(-1, 2)
-    rect = cv2.minAreaRect(polygon)
-    source = _order_points(cv2.boxPoints(rect))
-    width = max(1, int(round(max(np.linalg.norm(source[1] - source[0]), np.linalg.norm(source[2] - source[3])))))
-    height = max(1, int(round(max(np.linalg.norm(source[3] - source[0]), np.linalg.norm(source[2] - source[1])))))
-    destination = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]], dtype=np.float32)
-    matrix = cv2.getPerspectiveTransform(source, destination)
-    crop = cv2.warpPerspective(frame, matrix, (width, height))
-    if crop.shape[0] > crop.shape[1]:
-        old_height = crop.shape[0]
-        crop = cv2.rotate(crop, cv2.ROTATE_90_CLOCKWISE)
-        rotate_matrix = np.array([[0, -1, old_height - 1], [1, 0, 0], [0, 0, 1]], dtype=np.float32)
-        matrix = rotate_matrix @ matrix
-    return crop, matrix
-
-
-def _point_in_polygon(center: tuple[float, float], polygon: np.ndarray) -> bool:
-    contour = np.asarray(polygon, dtype=np.float32).reshape(-1, 1, 2)
-    return cv2.pointPolygonTest(contour, (float(center[0]), float(center[1])), False) >= 0
-
-
-def _transform_x(center: tuple[float, float], matrix: np.ndarray) -> float:
-    point = np.array([[[center[0], center[1]]]], dtype=np.float32)
-    return float(cv2.perspectiveTransform(point, matrix)[0, 0, 0])
-
-
-def orient_head_left(
-    crop: np.ndarray,
-    matrix: np.ndarray,
-    head_centers: list[tuple[float, float]],
-    tail_centers: list[tuple[float, float]],
-) -> tuple[np.ndarray | None, str]:
-    """Prefer one head; fall back to one tail. Reject only when neither side is unique."""
-    if len(head_centers) == 1:
-        flip = _transform_x(head_centers[0], matrix) > crop.shape[1] / 2
-        source = "head"
-    elif len(tail_centers) == 1:
-        flip = _transform_x(tail_centers[0], matrix) < crop.shape[1] / 2
-        source = "tail"
-    else:
-        return None, "ambiguous_head_and_tail"
-    return (cv2.flip(crop, 1) if flip else crop), source
-
-
-def crop_classifier_region(horizontal_crop: np.ndarray) -> np.ndarray:
-    """Crop the abdomen region sent to the female/male classifier."""
-    horizontal_height, total_length = horizontal_crop.shape[:2]
-    left = total_length // 4
-    right = total_length - total_length // 2
-    top = horizontal_height // 5
-    bottom = horizontal_height - horizontal_height // 5
-    if right <= left:
-        raise ValueError(f"Shrimp crop is too short: {total_length}px")
-    if bottom <= top:
-        raise ValueError(f"Shrimp crop is too low: {horizontal_height}px")
-    return horizontal_crop[top:bottom, left:right].copy()
-
-
-def _obb_rows(result) -> list[dict]:
-    rows = []
-    if result.obb is None:
-        return rows
-    for obb in result.obb:
-        class_index = int(obb.cls.cpu().numpy()[0])
-        polygon = obb.xyxyxyxy.cpu().numpy()[0].astype(np.float32)
-        rows.append(
-            {
-                "class_name": result.names[class_index],
-                "polygon": polygon,
-                "center": tuple(np.mean(polygon, axis=0).tolist()),
-                "confidence": float(obb.conf.cpu().numpy()[0]),
-                "track_id": extract_obb_track_id(obb),
-            }
-        )
-    return rows
-
-
 class HeadTailShrimpAnalyzer:
     def __init__(
         self,
         obb_model_path: str = MODEL_HEAD_TAIL_OBB_PATH,
-        cnn_model_path: str = MODEL_SEX_CLASSIFIER_PATH,
+        cnn_model_path: str = MODEL_YOLO_CLS_PATH,
     ) -> None:
         self.obb_model_path = obb_model_path
         self.cnn_model_path = cnn_model_path
         self.obb_model = YOLO(obb_model_path)
-        names = set(self.obb_model.names.values())
-        missing = REQUIRED_OBB_CLASSES - names
-        if missing:
-            raise ValueError(f"OBB model is missing classes: {sorted(missing)}; got {sorted(names)}")
+        validate_head_tail_obb_model(self.obb_model)
         self.classifier = load_sex_classifier(cnn_model_path)
         self._shrimp_display_ids: dict[int, int] = {}
         self._next_display_id = 1
@@ -247,18 +205,15 @@ class HeadTailShrimpAnalyzer:
     def _process_frame(
         self, frame: np.ndarray, result, frame_index: int, fps: float
     ) -> tuple[list[dict], np.ndarray, list[dict]]:
-        rows = _obb_rows(result)
-        shrimps = [row for row in rows if row["class_name"] == "shrimp"]
-        heads = [row for row in rows if row["class_name"] == "shrimp_head"]
-        tails = [row for row in rows if row["class_name"] == "shrimp_tail"]
+        shrimps, heads, tails = split_head_tail_rows(obb_rows(result))
         annotated = frame.copy()
         records = []
         debug_items = []
 
         for shrimp in shrimps:
             polygon = shrimp["polygon"]
-            inside_heads = [item["center"] for item in heads if _point_in_polygon(item["center"], polygon)]
-            inside_tails = [item["center"] for item in tails if _point_in_polygon(item["center"], polygon)]
+            inside_heads = associated_centers(heads, polygon)
+            inside_tails = associated_centers(tails, polygon)
             crop, matrix = rectify_shrimp(frame, polygon)
             oriented, orientation_source = orient_head_left(crop, matrix, inside_heads, inside_tails)
             if oriented is None:
@@ -507,10 +462,10 @@ class HeadTailShrimpAnalyzer:
                 export_frame = annotated
                 if debug:
                     export_debug_view = self._make_debug_view(debug_items, frame_index)
-                    export_frame = self._combine_preview(annotated, export_debug_view)
+                    export_frame = combine_preview(annotated, export_debug_view)
                     if debug_video_size is None:
-                        debug_video_size = self._debug_video_size(export_frame)
-                    export_frame = self._letterbox(export_frame, debug_video_size)
+                        debug_video_size = make_debug_video_size(export_frame)
+                    export_frame = letterbox(export_frame, debug_video_size)
                 if writer is None and not preview_only:
                     height, width = export_frame.shape[:2]
                     writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
@@ -520,9 +475,9 @@ class HeadTailShrimpAnalyzer:
                     preview_image = annotated
                     if debug_enabled:
                         debug_view = self._make_debug_view(debug_items, frame_index)
-                        preview_image = self._combine_preview(annotated, debug_view)
-                    preview_image = self._fit_preview_to_screen(preview_image)
-                    key = self._show_preview_or_raise("Head-tail shrimp tracking | D: debug | Q/Esc: quit", preview_image)
+                        preview_image = combine_preview(annotated, debug_view)
+                    preview_image = fit_preview_to_screen(preview_image)
+                    key = show_preview_or_raise("Head-tail shrimp tracking | D: debug | Q/Esc: quit", preview_image)
                     if key in {ord("d"), ord("D")}:
                         debug_enabled = not debug_enabled
                     elif key in {ord("q"), 27}:
@@ -538,8 +493,8 @@ class HeadTailShrimpAnalyzer:
         summaries = self._summarize(all_records)
         if preview_only:
             return {"output_dir": "", "video": "", "detections": "", "per_shrimp": ""}
-        self._write_csv(csv_path, all_records)
-        self._write_csv(summary_path, summaries)
+        write_csv(csv_path, all_records)
+        write_csv(summary_path, summaries)
         return {"output_dir": str(run_dir), "video": str(video_path), "detections": str(csv_path), "per_shrimp": str(summary_path)}
 
     @staticmethod

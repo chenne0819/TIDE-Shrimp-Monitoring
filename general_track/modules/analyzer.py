@@ -14,23 +14,13 @@ from ultralytics import YOLO
 from .obb_track import extract_obb_track_id, track_obb_frame
 
 from .config import (
-    CNN_MALE_LINE_THRESHOLD,
-    DEFAULT_KEYFRAMES,
-    DEFAULT_SKIP_FRAMES,
-    DEFAULT_TIME_WINDOW_SEC,
-    DEFAULT_TOTAL_SHRIMP,
     HBB_CONF,
-    ID_MATCH_DISTANCE,
     IMGSZ_HBB,
     IMGSZ_OBB,
-    MALE_LINE_MISSING_GRACE_SECONDS,
-    MALE_RATE_THRESHOLD,
     MIN_OBSERVATIONS_PER_SHRIMP,
     MODEL_CNN_PATH,
     MODEL_HBB_PATH,
-    MODEL_OBB_PATH,
-    OBS_RATE_MIN,
-    VOTE_WINDOW_SECONDS,
+    MODEL_HEAD_TAIL_OBB_PATH,
 )
 from .cnn_classifier import MaleLineCNNClassifier
 from .id_assigner import FixedIDAssigner
@@ -38,16 +28,28 @@ from .preprocessing import crop_oriented_box
 from .reporting import ReportWriter
 
 
+LEGACY_SKIP_STEP = 10
+LEGACY_SHRIMP_COUNT = 6
+LEGACY_KEYFRAME_COUNT = 12
+LEGACY_TIME_BUCKET_SEC = 10
+LEGACY_ID_DISTANCE = 260
+LEGACY_VOTE_SECONDS = 10.0
+LEGACY_MISSING_GRACE_SEC = 2.0
+LEGACY_OBS_CUTOFF = 0.03629
+LEGACY_MALE_CUTOFF = 0.93327
+LEGACY_OBB_MODEL_PATH = MODEL_HEAD_TAIL_OBB_PATH
+
+
 class ShrimpSexRatioAnalyzer:
     """Analyze a bucket video and estimate per-shrimp sex from multiple frames."""
 
     def __init__(self) -> None:
         print("Loading models...")
-        self.obb_model = YOLO(MODEL_OBB_PATH)
+        self.obb_model = YOLO(LEGACY_OBB_MODEL_PATH)
         self.hbb_model_path = MODEL_HBB_PATH
         self.hbb_model = None
         self.cnn_model_path = MODEL_CNN_PATH
-        self.cnn_threshold = CNN_MALE_LINE_THRESHOLD
+        self.cnn_threshold = None
         self.cnn_classifier = None
         self._hbb_box_cache: dict[int, list[float]] = {}
         self._preview_crop_refs: dict[int, np.ndarray] = {}
@@ -80,16 +82,16 @@ class ShrimpSexRatioAnalyzer:
         self,
         video_path: str,
         output_root: str = "outputs",
-        total_shrimp: int = DEFAULT_TOTAL_SHRIMP,
+        total_shrimp: int = LEGACY_SHRIMP_COUNT,
         unknown_total: bool = False,
         auto_total: bool = False,
         auto_total_percentile: float = 90.0,
         auto_total_skip_frames: int | None = None,
         auto_total_max_frames: int | None = None,
-        skip_frames: int = DEFAULT_SKIP_FRAMES,
+        skip_frames: int = LEGACY_SKIP_STEP,
         max_frames: int | None = None,
-        keyframes: int = DEFAULT_KEYFRAMES,
-        window_sec: int = DEFAULT_TIME_WINDOW_SEC,
+        keyframes: int = LEGACY_KEYFRAME_COUNT,
+        window_sec: int = LEGACY_TIME_BUCKET_SEC,
         truth_csv: str | None = None,
         gt_male: int | None = None,
         gt_female: int | None = None,
@@ -102,7 +104,7 @@ class ShrimpSexRatioAnalyzer:
         tracker_config: str | None = None,
         hbb_model_path: str | None = None,
         cnn_model_path: str | None = None,
-        cnn_threshold: float = CNN_MALE_LINE_THRESHOLD,
+        cnn_threshold: float | None = None,
         grayscale: bool = False,
     ) -> dict:
         run_mode = self._resolve_run_mode(mode, use_track)
@@ -118,7 +120,7 @@ class ShrimpSexRatioAnalyzer:
         self.hbb_model_path = hbb_model_path or MODEL_HBB_PATH
         self.hbb_model = YOLO(self.hbb_model_path)
         self.cnn_model_path = cnn_model_path or MODEL_CNN_PATH
-        self.cnn_threshold = float(cnn_threshold)
+        self.cnn_threshold = None if cnn_threshold is None else float(cnn_threshold)
         self.cnn_classifier = MaleLineCNNClassifier(self.cnn_model_path, threshold=self.cnn_threshold)
         self._hbb_box_cache = {}
         self._preview_crop_refs = {}
@@ -154,7 +156,7 @@ class ShrimpSexRatioAnalyzer:
             )
         assigner = FixedIDAssigner(
             total_ids=total_shrimp,
-            match_distance=ID_MATCH_DISTANCE,
+            match_distance=LEGACY_ID_DISTANCE,
         )
 
         detections: list[dict] = []
@@ -182,7 +184,7 @@ class ShrimpSexRatioAnalyzer:
             tracker_label = tracker_config if tracker_config else "Ultralytics default"
         print(f"Tracking: YOLO track() enabled | tracker: {tracker_label}")
         print(f"HBB model: {self.hbb_model_path}")
-        print(f"CNN model: {self.cnn_model_path} | threshold: {self.cnn_threshold:.2f}")
+        print(f"CNN model: {self.cnn_model_path} | threshold: {self.cnn_classifier.threshold:.2f}")
         if grayscale:
             print("Grayscale simulation: enabled")
         if preview_only:
@@ -304,7 +306,7 @@ class ShrimpSexRatioAnalyzer:
         summary["HBB_Temporal_Frames"] = 1
         summary["HBB_Temporal_Step_Frames"] = ""
         summary["CNN_Model"] = self.cnn_model_path
-        summary["CNN_Male_Line_Threshold"] = self.cnn_threshold
+        summary["CNN_Male_Line_Threshold"] = self.cnn_classifier.threshold if self.cnn_classifier else ""
         summary["Mode"] = run_mode
         summary["Tracking_Enabled"] = bool(track_mode)
         summary["Tracker_Config"] = tracker_config or ""
@@ -376,7 +378,7 @@ class ShrimpSexRatioAnalyzer:
                 pbar.update(1)
 
         df = pd.DataFrame(counts)
-        values = df["OBB_Detection_Count"].to_numpy() if not df.empty else np.array([DEFAULT_TOTAL_SHRIMP])
+        values = df["OBB_Detection_Count"].to_numpy() if not df.empty else np.array([LEGACY_SHRIMP_COUNT])
         p_count = float(np.percentile(values, percentile))
         recommended = max(1, int(np.ceil(p_count)))
         median = float(np.median(values))
@@ -609,8 +611,8 @@ class ShrimpSexRatioAnalyzer:
         current_frame_idx: int,
         fps: float,
     ) -> None:
-        window_frames = max(1, int(round(float(fps) * VOTE_WINDOW_SECONDS)))
-        grace_frames = max(1, int(round(float(fps) * MALE_LINE_MISSING_GRACE_SECONDS)))
+        window_frames = max(1, int(round(float(fps) * LEGACY_VOTE_SECONDS)))
+        grace_frames = max(1, int(round(float(fps) * LEGACY_MISSING_GRACE_SEC)))
         cutoff_frame = int(current_frame_idx) - window_frames
         for det in detections:
             if not det.get("include_in_stats", True):
@@ -638,8 +640,8 @@ class ShrimpSexRatioAnalyzer:
             det["vote_total_seen"] = total_seen
             det["vote_male_hits"] = male_hits
             det["vote_male_rate"] = male_rate
-            det["vote_is_male"] = male_rate >= MALE_RATE_THRESHOLD
-            det["vote_label"] = "Male" if male_rate >= MALE_RATE_THRESHOLD else "Obs" if male_rate >= OBS_RATE_MIN else "Female"
+            det["vote_is_male"] = male_rate >= LEGACY_MALE_CUTOFF
+            det["vote_label"] = "Male" if male_rate >= LEGACY_MALE_CUTOFF else "Obs" if male_rate >= LEGACY_OBS_CUTOFF else "Female"
             det["vote_hold_active"] = hold_active
 
     @staticmethod
@@ -703,7 +705,7 @@ class ShrimpSexRatioAnalyzer:
             enough = seen >= MIN_OBSERVATIONS_PER_SHRIMP
             final = "Unknown"
             if enough:
-                final = "Male" if male_rate >= MALE_RATE_THRESHOLD else "Female"
+                final = "Male" if male_rate >= LEGACY_MALE_CUTOFF else "Female"
             rows.append({
                 "Shrimp_ID": shrimp_id,
                 "Track_IDs": track_ids,
@@ -714,7 +716,7 @@ class ShrimpSexRatioAnalyzer:
                 "Mean_Male_Conf": round(float(group["Male_Conf"].mean()), 4) if seen else 0.0,
                 "Forced_ID_Count": forced,
                 "Forced_ID_Rate_Pct": round(forced / seen * 100, 2) if seen else 0.0,
-                "Decision_Margin_Pct": round(abs(male_rate - MALE_RATE_THRESHOLD) * 100, 2),
+                "Decision_Margin_Pct": round(abs(male_rate - LEGACY_MALE_CUTOFF) * 100, 2),
                 "Final_Label": final,
                 "Enough_Evidence": enough,
             })
@@ -761,7 +763,7 @@ class ShrimpSexRatioAnalyzer:
                 forced_rate = 0.0
             else:
                 per_id = group.groupby("Shrimp_ID")["Pred_Label"].agg(
-                    lambda s: "Male" if (s == "Male").mean() >= MALE_RATE_THRESHOLD else "Female"
+                    lambda s: "Male" if (s == "Male").mean() >= LEGACY_MALE_CUTOFF else "Female"
                 )
                 male = int((per_id == "Male").sum())
                 female = int((per_id == "Female").sum())
@@ -859,12 +861,12 @@ class ShrimpSexRatioAnalyzer:
 
         summary = {
             "Video": video_name,
-            "OBB_Model": MODEL_OBB_PATH,
+            "OBB_Model": LEGACY_OBB_MODEL_PATH,
             "HBB_Model": hbb_model_path,
             "IMGSZ_OBB": IMGSZ_OBB,
             "IMGSZ_HBB": IMGSZ_HBB,
             "HBB_CONF": HBB_CONF,
-            "MALE_RATE_THRESHOLD": MALE_RATE_THRESHOLD,
+            "LEGACY_MALE_CUTOFF": LEGACY_MALE_CUTOFF,
             "MIN_OBSERVATIONS_PER_SHRIMP": MIN_OBSERVATIONS_PER_SHRIMP,
             "Duration_Sec": round(total_frames / fps, 2),
             "Sampled_Detections": int(len(det_df)),
@@ -1133,3 +1135,5 @@ class ShrimpSexRatioAnalyzer:
     @staticmethod
     def _select_keyframes(keyframes: list[dict], count: int) -> list[dict]:
         return sorted(keyframes, key=lambda k: k["Score"], reverse=True)[: max(0, count)]
+
+

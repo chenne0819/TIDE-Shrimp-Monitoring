@@ -3,7 +3,7 @@ import sys
 
 from .modules.config import (
     MODEL_HEAD_TAIL_OBB_PATH,
-    MODEL_SEX_CLASSIFIER_PATH,
+    MODEL_YOLO_CLS_PATH,
 )
 from .modules.head_tail_pipeline import HeadTailShrimpAnalyzer
 
@@ -11,9 +11,15 @@ from .modules.head_tail_pipeline import HeadTailShrimpAnalyzer
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Track OBB shrimp, orient by head/tail, and classify female/male.")
     parser.add_argument("--video", required=True, help="Input video path or camera index.")
-    parser.add_argument("--output-root", default="general_track/exports/resnet18")
+    parser.add_argument("--output-root", default="general_track/exports/head_tail_cls")
     parser.add_argument("--obb-model", default=MODEL_HEAD_TAIL_OBB_PATH)
-    parser.add_argument("--cnn-model", default=MODEL_SEX_CLASSIFIER_PATH, help="ResNet or YOLO classification checkpoint.")
+    parser.add_argument(
+        "--classifier-model",
+        "--cnn-model",
+        dest="classifier_model",
+        default=MODEL_YOLO_CLS_PATH,
+        help="ResNet or YOLO classification checkpoint.",
+    )
     parser.add_argument("--tracker", default="bytetrack.yaml", help="Ultralytics ByteTrack config. Default: bytetrack.yaml")
     parser.add_argument("--conf", type=float, default=0.5)
     parser.add_argument("--iou", type=float, default=0.3)
@@ -27,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    analyzer = HeadTailShrimpAnalyzer(args.obb_model, args.cnn_model)
+    analyzer = HeadTailShrimpAnalyzer(args.obb_model, args.classifier_model)
     try:
         paths = analyzer.run(
             video=args.video,
