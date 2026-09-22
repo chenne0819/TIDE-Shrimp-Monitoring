@@ -68,3 +68,5 @@ playwright-report/
 *.webm
 # Local demo footage and stills derived from private recordings.
 web/frontend/public/demo/
+# Next.js may generate local coding-agent guidance during development.
+web/frontend/AGENTS.md

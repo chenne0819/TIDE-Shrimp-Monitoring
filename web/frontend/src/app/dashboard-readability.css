@@ -1,0 +1,606 @@
+/* Operational pages use a readable type scale independent of the landing page.
+   Light secondary text: #4b6259 on #fff = 6.58:1; on #f4f7f4 = 6.10:1. */
+.app-shell {
+  --muted: #4b6259;
+  --border: #d5dfd7;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.app-shell .workspace-label,
+.app-shell .sidebar-note p,
+.app-shell .workspace-badge,
+.app-shell .breadcrumb,
+.app-shell .demo-banner,
+.app-shell .demo-banner a,
+.app-shell .page-kicker,
+.app-shell .filter-hint,
+.app-shell .clear-filter,
+.app-shell .chart-axis-label,
+.app-shell .chart-footnote,
+.app-shell .measurement-note,
+.app-shell .app-footer {
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.app-shell .workspace-label span {
+  font-size: 11px;
+  letter-spacing: 1px;
+  opacity: 1;
+}
+
+.app-shell .nav-item,
+.app-shell .sidebar-bottom .nav-item {
+  font-size: 15px;
+  min-height: 48px;
+}
+
+.app-shell .breadcrumb span {
+  color: var(--muted);
+}
+
+.app-shell .page-heading h1 {
+  font-size: clamp(28px, 2.4vw, 36px);
+  line-height: 1.3;
+}
+
+.app-shell .page-heading > div > p:last-child:not(.page-kicker) {
+  max-width: none;
+  font-size: 16px;
+  line-height: 1.75;
+  margin-top: 12px;
+}
+
+.app-shell .button,
+.app-shell .text-link,
+.app-shell .panel-heading .text-link,
+.app-shell .page-heading > .button {
+  font-size: 15px;
+  min-height: 44px;
+}
+
+.app-shell .filter-bar {
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.app-shell .filter-date,
+.app-shell .filter-pond {
+  height: 48px;
+  font-size: 15px;
+}
+
+.app-shell .filter-date {
+  width: 390px;
+  max-width: 100%;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.app-shell .filter-pond select,
+.app-shell .date-field .date-field-input {
+  font-size: 16px;
+  height: 40px;
+}
+
+.app-shell .date-to {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.app-shell .date-field-header,
+.app-shell .date-field-weekdays,
+.app-shell .date-field-footer button,
+.app-shell .date-field-error {
+  font-size: 13px;
+}
+
+.app-shell .date-field-month strong,
+.app-shell .date-field-days button {
+  font-size: 15px;
+}
+
+.app-shell .date-field-days button {
+  min-height: 35px;
+}
+
+.app-shell .stat-card {
+  padding: 23px 20px 21px;
+}
+
+.app-shell .stat-title {
+  font-size: 15px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.app-shell .stat-title svg {
+  flex-shrink: 0;
+  color: #43745c;
+}
+
+.app-shell .stat-value {
+  font-size: clamp(34px, 3vw, 42px);
+  font-weight: 600;
+  letter-spacing: -1.3px;
+  margin-top: 18px;
+  line-height: 1.15;
+}
+
+.app-shell .stat-value span {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.app-shell .stats-grid-measurements .stat-value-empty {
+  font-size: 23px;
+}
+
+.app-shell .stat-card p {
+  font-size: 14px;
+  line-height: 1.6;
+  align-items: flex-start;
+}
+
+.app-shell .stat-card p svg {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.app-shell .stat-featured .stat-title,
+.app-shell .stat-featured .stat-value span,
+.app-shell .stat-featured p {
+  color: #d5e5d8;
+}
+
+.app-shell .stat-featured .stat-title svg {
+  color: #d7eb9b;
+}
+
+.app-shell .panel-heading {
+  gap: 16px;
+  padding: 24px 24px 0;
+}
+
+.app-shell .panel-heading h2 {
+  font-size: 20px;
+  line-height: 1.45;
+}
+
+.app-shell .panel-heading p {
+  max-width: none;
+  font-size: 15px;
+  line-height: 1.65;
+  margin-top: 8px;
+}
+
+.app-shell .segmented {
+  flex-wrap: wrap;
+}
+
+.app-shell .segmented button {
+  font-size: 14px;
+  min-height: 40px;
+  padding: 7px 12px;
+}
+
+.app-shell .chart-axis-label {
+  margin-top: 24px;
+}
+
+.app-shell .chart-box {
+  height: 260px;
+  padding: 0 12px;
+}
+
+.app-shell .chart-footnote {
+  padding: 8px 24px 23px;
+}
+
+.app-shell .water-panel {
+  display: flex;
+  padding: 26px;
+}
+
+.app-shell .water-panel-top,
+.app-shell .water-panel > a {
+  font-size: 15px;
+  font-weight: 550;
+}
+
+.app-shell .water-panel h2 {
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.app-shell .water-numbers strong {
+  font-size: 36px;
+}
+
+.app-shell .water-numbers span,
+.app-shell .water-panel > p {
+  font-size: 14px;
+  line-height: 1.75;
+  color: #3e5d47;
+}
+
+.app-shell .donut-center strong {
+  font-size: 32px;
+}
+
+.app-shell .donut-center span {
+  font-size: 14px;
+}
+
+.app-shell .chart-legend {
+  gap: 12px;
+  padding-bottom: 26px;
+}
+
+.app-shell .chart-legend > div {
+  font-size: 15px;
+  gap: 10px;
+}
+
+.app-shell .legend-key {
+  width: 11px;
+  height: 11px;
+}
+
+.app-shell .recordings-panel .panel-heading {
+  padding-bottom: 23px;
+}
+
+.app-shell .job-table th,
+.app-shell .track-table th {
+  font-size: 14px;
+  font-weight: 600;
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+
+.app-shell .job-table td,
+.app-shell .track-table td,
+.app-shell .recording-link strong,
+.app-shell .pond-name {
+  font-size: 15px;
+}
+
+.app-shell .job-table td {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.app-shell .table-sub,
+.app-shell .recording-link > div:last-child > span,
+.app-shell .unit,
+.app-shell .status-badge,
+.app-shell .water-badge {
+  font-size: 14px;
+}
+
+.app-shell .numeric {
+  font-size: 17px !important;
+}
+
+.app-shell .status-badge {
+  color: #376044;
+}
+
+.app-shell .status-processing {
+  color: #256273;
+}
+
+.app-shell .status-queued {
+  color: #5a6243;
+}
+
+.app-shell .status-stopped,
+.app-shell .status-failed {
+  color: #994d32;
+}
+
+.app-shell .water-badge {
+  color: #365f37;
+}
+
+.app-shell .water-badge.turbid {
+  color: #77551f;
+}
+
+.app-shell .water-badge.pending {
+  color: var(--muted);
+}
+
+.app-shell .table-arrow {
+  width: 40px;
+  height: 40px;
+  color: var(--green);
+}
+
+.app-shell .state-panel p {
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-shell {
+    --muted: #b6c9bc;
+    --border: #3b5446;
+  }
+
+  .app-shell .stat-title svg {
+    color: #a9c7a9;
+  }
+
+  .app-shell .water-numbers span,
+  .app-shell .water-panel > p {
+    color: #bfd5bf;
+  }
+
+  .app-shell .status-badge,
+  .app-shell .water-badge {
+    color: #bfd2b2;
+  }
+
+  .app-shell .status-processing {
+    color: #a9d0d8;
+  }
+
+  .app-shell .status-queued {
+    color: #c7ccab;
+  }
+
+  .app-shell .status-stopped,
+  .app-shell .status-failed {
+    color: #ebbc9e;
+  }
+
+  .app-shell .water-badge.turbid {
+    color: #e4c997;
+  }
+
+  .app-shell .water-badge.pending {
+    color: var(--muted);
+  }
+}
+
+@media (max-width: 1399px) and (min-width: 1200px) {
+  .app-shell .stats-grid.stats-grid-measurements {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .app-shell .stats-grid-measurements .stat-card {
+    padding: 20px 15px 18px;
+  }
+
+  .app-shell .stats-grid-measurements .stat-title svg {
+    display: none;
+  }
+
+  .app-shell .stats-grid-measurements .stat-value {
+    font-size: 36px;
+  }
+}
+
+@media (max-width: 1199px) and (min-width: 768px) {
+  .app-shell .stats-grid.stats-grid-measurements {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .app-shell .stats-grid-measurements .stat-featured {
+    grid-column: auto;
+    grid-row: auto;
+    display: block;
+  }
+
+  .app-shell .stats-grid-measurements .stat-featured .stat-title {
+    justify-content: space-between;
+  }
+
+  .app-shell .stats-grid-measurements .stat-featured .stat-value {
+    margin-top: 18px;
+  }
+
+  .app-shell .stats-grid-measurements .stat-featured p {
+    margin-top: 15px;
+  }
+}
+
+@media (max-width: 1199px) {
+  .app-shell .dashboard-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .water-panel {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 28px;
+  }
+
+  .app-shell .water-panel-top,
+  .app-shell .water-panel > a {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell .water-numbers {
+    grid-column: 2;
+    grid-row: 2 / 4;
+    align-items: center;
+  }
+
+  .app-shell .distribution-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .sex-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+  }
+
+  .app-shell .sex-panel .panel-heading {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell .chart-legend {
+    padding-top: 20px;
+    padding-left: 8px;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-shell .app-topbar {
+    min-height: 72px;
+    height: auto;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .app-shell .app-main {
+    padding: 28px 18px 16px;
+  }
+
+  .app-shell .page-heading {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .app-shell .page-heading > .button {
+    margin-top: 0;
+  }
+
+  .app-shell .filter-date {
+    width: 100%;
+    max-width: none;
+    flex-basis: 100%;
+    gap: 6px;
+    padding: 0 10px;
+  }
+
+  .app-shell .filter-date .date-field-toggle {
+    width: 26px;
+  }
+
+  .app-shell .stat-card {
+    padding: 20px 16px;
+  }
+
+  .app-shell .stat-title {
+    font-size: 14px;
+  }
+
+  .app-shell .stat-value {
+    font-size: 34px;
+  }
+
+  .app-shell .stat-value span {
+    font-size: 15px;
+    margin-left: 5px;
+  }
+
+  .app-shell .panel-heading {
+    padding: 22px 18px 0;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+
+  .app-shell .segmented button {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .app-shell .chart-axis-label {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+
+  .app-shell .chart-box {
+    padding: 0 3px;
+    height: 252px;
+  }
+
+  .app-shell .chart-footnote {
+    padding: 8px 18px 22px;
+  }
+
+  .app-shell .water-panel {
+    display: flex;
+    padding: 23px;
+  }
+
+  .app-shell .water-panel h2 {
+    font-size: 24px;
+  }
+
+  .app-shell .water-numbers {
+    margin-bottom: 2px;
+  }
+
+  .app-shell .sex-panel {
+    display: block;
+  }
+
+  .app-shell .chart-legend {
+    padding: 0 24px 26px;
+  }
+
+  .app-shell .recording-link {
+    min-width: 250px;
+  }
+
+  .app-shell .recording-link strong {
+    max-width: 230px;
+  }
+
+  .app-shell .demo-banner {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .app-shell .demo-banner > span {
+    min-width: 0;
+  }
+
+  .app-shell .app-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .app-shell .app-footer > span:last-child {
+    max-width: none;
+    text-align: left;
+  }
+}
+
+@media (max-width: 374px) {
+  .app-shell .filter-date {
+    flex-direction: column;
+    align-items: stretch;
+    height: auto;
+    padding: 8px 12px;
+    gap: 0;
+  }
+
+  .app-shell .filter-date .date-field {
+    width: 100%;
+  }
+
+  .app-shell .filter-date .date-to {
+    text-align: center;
+  }
+
+  .app-shell .stats-grid.stats-grid-measurements {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .stats-grid-measurements .stat-featured {
+    column-gap: 10px;
+  }
+}
