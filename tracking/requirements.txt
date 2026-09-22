@@ -1,0 +1,16 @@
+# Python 3.12 recommended. Install a CUDA torch build separately if needed.
+ultralytics>=8.3,<9
+torch>=2.6
+torchvision>=0.21
+opencv-python>=4.10,<5
+numpy>=1.26,<3
+pandas>=2.2,<4
+matplotlib>=3.9
+tqdm>=4.66
+pillow>=10
+joblib>=1.4
+# Match the original serialized regression models.
+scikit-learn==1.6.1
+lap>=0.5
+# Required to deserialize the supplied HBB checkpoint's training metadata.
+albumentations==2.0.8

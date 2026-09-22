@@ -15,10 +15,12 @@ from torchvision.ops import FeaturePyramidNetwork
 from tqdm import tqdm
 from ultralytics import YOLO
 
+from shrimp_monitoring import MonitoringSession, summarize_measurements
+
 from .config import (
     IMGSZ_OBB,
     MODEL_HEAD_TAIL_OBB_PATH,
-    MODEL_YOLO_CLS_PATH,
+    MODEL_SEX_CLASSIFIER_PATH,
 )
 from .head_tail_common import (
     associated_centers,
@@ -177,10 +179,12 @@ class HeadTailShrimpAnalyzer:
     def __init__(
         self,
         obb_model_path: str = MODEL_HEAD_TAIL_OBB_PATH,
-        cnn_model_path: str = MODEL_YOLO_CLS_PATH,
+        cnn_model_path: str = MODEL_SEX_CLASSIFIER_PATH,
+        monitoring: MonitoringSession | None = None,
     ) -> None:
         self.obb_model_path = obb_model_path
         self.cnn_model_path = cnn_model_path
+        self.monitoring = monitoring or MonitoringSession()
         self.obb_model = YOLO(obb_model_path)
         validate_head_tail_obb_model(self.obb_model)
         self.classifier = load_sex_classifier(cnn_model_path)
@@ -245,6 +249,7 @@ class HeadTailShrimpAnalyzer:
                     "tail_count": len(inside_tails),
                     "orientation_source": orientation_source,
                     "classifier_crop": classifier_crop,
+                    **self.monitoring.measure(polygon, frame.shape),
                 }
             )
             color = (255, 120, 40) if label == "male" else (0, 200, 0)
@@ -261,6 +266,8 @@ class HeadTailShrimpAnalyzer:
                 2,
                 cv2.LINE_AA,
             )
+            self.monitoring.annotate_measurement(annotated, records[-1], anchor)
+        self.monitoring.annotate_water(annotated)
         return records, annotated, debug_items
 
     @staticmethod
@@ -421,81 +428,99 @@ class HeadTailShrimpAnalyzer:
         debug: bool = False,
         save_crops: bool = False,
     ) -> dict:
+        self.monitoring.reset()
         source = int(video) if str(video).strip().isdigit() else video
         capture = cv2.VideoCapture(source)
         if not capture.isOpened():
+            capture.release()
             raise FileNotFoundError(f"Cannot open video or camera: {video}")
-        fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        source_name = f"camera_{video}" if isinstance(source, int) else Path(video).stem
-        preview = preview or preview_only
-        debug_enabled = bool(debug)
-        self._shrimp_display_ids = {}
-        self._next_display_id = 1
-        run_dir = Path(output_root) / source_name / datetime.now().strftime("%Y%m%d_%H%M%S")
-        if not preview_only:
-            run_dir.mkdir(parents=True, exist_ok=True)
-        crop_dir = run_dir / "classifier_crops"
-        if save_crops and not preview_only:
-            crop_dir.mkdir(exist_ok=True)
-        video_path = run_dir / "result.mp4"
-        csv_path = run_dir / "detections.csv"
-        summary_path = run_dir / "per_shrimp.csv"
         writer = None
-        debug_video_size = None
-        all_records = []
-        frame_index = 0
-        progress_total = min(frame_count, max_frames) if max_frames and frame_count > 0 else (frame_count or None)
+        preview = preview or preview_only
+        skipped_turbid = False
+        try:
+            fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
+            frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            source_name = f"camera_{video}" if isinstance(source, int) else Path(video).stem
+            debug_enabled = bool(debug)
+            self._shrimp_display_ids = {}
+            self._next_display_id = 1
+            run_dir = Path(output_root) / source_name / datetime.now().strftime("%Y%m%d_%H%M%S")
+            if not preview_only:
+                run_dir.mkdir(parents=True, exist_ok=True)
+            crop_dir = run_dir / "classifier_crops"
+            if save_crops and not preview_only:
+                crop_dir.mkdir(exist_ok=True)
+            video_path = run_dir / "result.mp4"
+            csv_path = run_dir / "detections.csv"
+            summary_path = run_dir / "per_shrimp.csv"
+            debug_video_size = None
+            all_records = []
+            frame_index = 0
+            progress_total = min(frame_count, max_frames) if max_frames and frame_count > 0 else (frame_count or None)
 
-        with tqdm(total=progress_total, desc="Head/tail tracking", unit="frame", ncols=85) as progress:
-            while max_frames is None or frame_index < max_frames:
-                ok, frame = capture.read()
-                if not ok:
-                    break
-                result = self._detect(frame, tracker, conf, iou)
-                records, annotated, debug_items = self._process_frame(frame, result, frame_index, fps)
-                for crop_index, record in enumerate(records):
-                    crop = record.pop("classifier_crop")
-                    if save_crops and not preview_only:
-                        cv2.imwrite(str(crop_dir / f"frame_{frame_index:06d}_{crop_index:02d}_{record['label']}.jpg"), crop)
-                all_records.extend(records)
-                export_frame = annotated
-                if debug:
-                    export_debug_view = self._make_debug_view(debug_items, frame_index)
-                    export_frame = combine_preview(annotated, export_debug_view)
-                    if debug_video_size is None:
-                        debug_video_size = make_debug_video_size(export_frame)
-                    export_frame = letterbox(export_frame, debug_video_size)
-                if writer is None and not preview_only:
-                    height, width = export_frame.shape[:2]
-                    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-                if writer is not None:
-                    writer.write(export_frame)
-                if preview:
-                    preview_image = annotated
-                    if debug_enabled:
-                        debug_view = self._make_debug_view(debug_items, frame_index)
-                        preview_image = combine_preview(annotated, debug_view)
-                    preview_image = fit_preview_to_screen(preview_image)
-                    key = show_preview_or_raise("Head-tail shrimp tracking | D: debug | Q/Esc: quit", preview_image)
-                    if key in {ord("d"), ord("D")}:
-                        debug_enabled = not debug_enabled
-                    elif key in {ord("q"), 27}:
+            with tqdm(total=progress_total, desc="Head/tail tracking", unit="frame", ncols=85) as progress:
+                while max_frames is None or frame_index < max_frames:
+                    ok, frame = capture.read()
+                    if not ok:
                         break
-                frame_index += 1
-                progress.update(1)
+                    if frame_index == 0 and not self.monitoring.check_frame(frame, frame_index, fps):
+                        skipped_turbid = True
+                        break
+                    result = self._detect(frame, tracker, conf, iou)
+                    records, annotated, debug_items = self._process_frame(frame, result, frame_index, fps)
+                    for crop_index, record in enumerate(records):
+                        crop = record.pop("classifier_crop")
+                        if save_crops and not preview_only:
+                            cv2.imwrite(str(crop_dir / f"frame_{frame_index:06d}_{crop_index:02d}_{record['label']}.jpg"), crop)
+                    all_records.extend(records)
+                    export_frame = annotated
+                    if debug:
+                        export_debug_view = self._make_debug_view(debug_items, frame_index)
+                        export_frame = combine_preview(annotated, export_debug_view)
+                        if debug_video_size is None:
+                            debug_video_size = make_debug_video_size(export_frame)
+                        export_frame = letterbox(export_frame, debug_video_size)
+                    if writer is None and not preview_only:
+                        height, width = export_frame.shape[:2]
+                        writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+                        if not writer.isOpened():
+                            raise RuntimeError(f"Unable to create result video: {video_path}")
+                    if writer is not None:
+                        writer.write(export_frame)
+                    if preview:
+                        preview_image = annotated
+                        if debug_enabled:
+                            debug_view = self._make_debug_view(debug_items, frame_index)
+                            preview_image = combine_preview(annotated, debug_view)
+                        preview_image = fit_preview_to_screen(preview_image)
+                        key = show_preview_or_raise("Head-tail shrimp tracking | D: debug | Q/Esc: quit", preview_image)
+                        if key in {ord("d"), ord("D")}:
+                            debug_enabled = not debug_enabled
+                        elif key in {ord("q"), 27}:
+                            break
+                    frame_index += 1
+                    progress.update(1)
 
-        capture.release()
-        if writer is not None:
-            writer.release()
-        if preview:
-            cv2.destroyAllWindows()
-        summaries = self._summarize(all_records)
-        if preview_only:
-            return {"output_dir": "", "video": "", "detections": "", "per_shrimp": ""}
-        write_csv(csv_path, all_records)
-        write_csv(summary_path, summaries)
-        return {"output_dir": str(run_dir), "video": str(video_path), "detections": str(csv_path), "per_shrimp": str(summary_path)}
+            summaries = self._summarize(all_records)
+            skip_status = {"status": "skipped_turbid", "monitoring_status": "skipped_turbid", "skipped": True} if skipped_turbid else {}
+            if preview_only:
+                return {"output_dir": "", "video": "", "detections": "", "per_shrimp": "", **skip_status}
+            write_csv(csv_path, all_records)
+            write_csv(summary_path, summaries)
+            return {
+                "output_dir": str(run_dir),
+                "video": str(video_path) if writer is not None else "",
+                "detections": str(csv_path),
+                "per_shrimp": str(summary_path),
+                **self.monitoring.export(run_dir),
+                **skip_status,
+            }
+        finally:
+            capture.release()
+            if writer is not None:
+                writer.release()
+            if preview:
+                cv2.destroyAllWindows()
 
     @staticmethod
     def _summarize(records: list[dict]) -> list[dict]:
@@ -515,6 +540,7 @@ class HeadTailShrimpAnalyzer:
                     "male_votes": votes["male"],
                     "female_votes": votes["female"],
                     "mean_male_probability": round(float(np.mean([item["male_probability"] for item in items])), 6),
+                    **summarize_measurements(items),
                 }
             )
         return summaries

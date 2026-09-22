@@ -1,6 +1,8 @@
 import argparse
 import os
 
+from shrimp_monitoring.cli import add_monitoring_arguments, monitoring_from_args
+
 from .modules.analyzer import ShrimpSexRatioAnalyzer
 from .modules.config import (
     DEFAULT_KEYFRAMES,
@@ -24,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview-only", action="store_true", help="Only show preview; do not write outputs.")
     parser.add_argument("--tracker", default="bytetrack.yaml", help="Optional Ultralytics tracker YAML, such as bytetrack.yaml or botsort.yaml.")
     parser.add_argument("--hbb-temporal-step-frames", type=int, default=HBB_TEMPORAL_STEP_FRAMES, help="Frame interval used by temporal HBB stacks.")
+    parser.add_argument("--obb-model", help="Override the new project's OBB tracking weights.")
+    parser.add_argument("--hbb-model", help="Override the 3-frame, 9-channel HBB weights (ordinary 3-channel weights are incompatible).")
+    add_monitoring_arguments(parser)
     return parser
 
 
@@ -34,7 +39,11 @@ def _grouped_output_root(base_output_root: str, step_frames: int) -> str:
 def main() -> None:
     args = build_parser().parse_args()
     output_root = _grouped_output_root(args.output_root, args.hbb_temporal_step_frames)
-    ShrimpSexRatioAnalyzer().run(
+    ShrimpSexRatioAnalyzer(
+        monitoring=monitoring_from_args(args),
+        obb_model_path=args.obb_model,
+        hbb_model_path=args.hbb_model,
+    ).run(
         video_path=args.video,
         output_root=output_root,
         total_shrimp=args.total_shrimp,

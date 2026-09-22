@@ -1,421 +1,247 @@
-# Grass Shrimp Sex Ratio Analyzer
+# Shrimp-Male-Yolo-Tracking：水質、長寬與重量整合版
 
-草蝦公母比例分析工具。輸入透明桶底部仰拍影片，系統會偵測蝦體、裁切拉正、辨識公蝦性徵 `male_line`，再用多幀統計輸出每隻蝦與整桶的公母判定結果。
+本專案以 **Shrimp-Male-Yolo-Tracking 的 YOLO 偵測、頭尾判斷、公母辨識與追蹤流程**為主，接入 ShrimpVisionRT 的水質分類、尺寸換算及重量回歸。功能已直接整合在 Python 程式中，可由原有 `.py` 入口執行。
 
-## 功能入口
+本 README 記錄 **2026-09-20 整合狀態**。本機的一般追蹤、頭尾追蹤與單幀分析所需模型已放好；重新 clone 者須另外取得模型並放入下列 `model/` 結構。只有選用 YOLO 公母分類或多通道追蹤時，才需要對應的選配權重。
 
-目前主要功能已拆成三個獨立資料夾。每個資料夾都有自己的可執行檔與 `modules/`，不再使用舊的 `Fast-Stats.py`。
+## 1. 目前新增了哪些功能
 
-```text
-predict/
-  單幀 OBB predict() 偵測
-  不使用 YOLO track()
-  適合固定抽幀分析、輸出正式統計、auto-total 預掃描
+| 功能 | 目前行為 | 啟用方式 |
+| --- | --- | --- |
+| 水質辨識 | 每個來源的第一幀分類為 `clear`／`turbid`，附信心度 | `--water-quality` |
+| 混濁處理 | `stop` 在蝦體推論前停止；`report` 記錄結果後繼續 | `--water-policy stop` 或 `report` |
+| 長度換算 | 新模型 OBB 長邊像素 → 參考尺度 → 原長度回歸模型 → mm | `--biometrics` |
+| 寬度換算 | 新模型 OBB 短邊像素 → 原寬度回歸模型 → mm；標記為框寬估測 | `--biometrics` |
+| 重量預測 | 預設依校正後長度估重；也可選長度＋寬度模型，輸出 g | `--weight-mode length` 或 `length-width` |
+| 畫面標註 | 原追蹤畫面附加長度、`W~` 框寬、重量及首幀水質 | 啟用對應功能後自動顯示 |
+| CSV 與個體摘要 | 原紀錄增加尺寸重量，每 ID 彙整有效觀測平均 | 正常輸出模式自動寫入 |
+| 監測紀錄 | 新增 `water_quality.csv`、`monitoring.json`，保存分類與換算設定 | 正常輸出模式自動寫入 |
 
-general_track/
-  YOLO OBB track() + 單幀 HBB male_line
-  適合攝影機/影片即時預覽、一般追蹤測試
+**`--monitoring` 同時啟用水質與長寬重量。** 不加 `--monitoring`、`--water-quality` 或 `--biometrics` 時，新增功能預設關閉。只指定模型路徑不會自動啟用功能。
 
-multi_channel_track/
-  YOLO OBB track() + 3-frame 9-channel temporal HBB male_line
-  適合測試多通道 HBB 模型與時間序列判斷
-```
+水質目前是清澈／混濁的影像分類，不是 pH、溶氧量測，也不是整段影片持續重新分類。原有追蹤 ID、分類模型及公母投票仍由新版程式負責。
 
-快速預覽：
+## 2. 實際整合在哪些 Python 檔案
 
-```powershell
-python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
-python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
-```
+| 檔案 | 用途 |
+| --- | --- |
+| [shrimp_monitoring/water.py](shrimp_monitoring/water.py) | 舊水質模型的前處理、載入與分類 |
+| [shrimp_monitoring/biometrics.py](shrimp_monitoring/biometrics.py) | OBB 尺寸、像素尺度、長寬回歸、重量預測及平均值 |
+| [shrimp_monitoring/runtime.py](shrimp_monitoring/runtime.py) | 將水質、量測、標註及輸出接到各入口 |
+| [shrimp_monitoring/cli.py](shrimp_monitoring/cli.py) | 共用參數、模型位置及換算設定 |
+| [project_paths.py](project_paths.py) | 依專案所在位置解析預設模型路徑，支援搬移資料夾 |
+| [general_track/run_track.py](general_track/run_track.py) ＋ [track_pipeline.py](general_track/modules/track_pipeline.py) | 主要入口：新版 OBB／HBB／ByteTrack ＋ 新增功能 |
+| [general_track/run_head_tail_track.py](general_track/run_head_tail_track.py) ＋ [head_tail_pipeline.py](general_track/modules/head_tail_pipeline.py) | 頭尾 OBB／ResNet 或 YOLO 分類 ＋ 新增功能 |
+| [predict/run_predict.py](predict/run_predict.py) ＋ [analyzer.py](predict/modules/analyzer.py) | 單幀分析 ＋ 新增功能 |
+| [multi_channel_track/run_multi_channel_track.py](multi_channel_track/run_multi_channel_track.py) ＋ [analyzer.py](multi_channel_track/modules/analyzer.py) | 多通道追蹤 ＋ 新增功能，仍需相符的 9 通道權重 |
 
-## 專案結構
+`run-monitoring.ps1` 只是代填 Python 指令的選用啟動工具，沒有承載辨識演算法；下面全部使用 Python 直接執行。
+
+## 3. 目前已放好的模型
+
+以下為**本機整合時已備妥的檔案與目標位置**。本次使用的 `.pt`、`.pth` 及 `model/` 內的 `.pkl` 均被 Git 忽略且未提交，單靠 clone 不會取得這批權重。請另外向專案維護者取得模型，保持下列檔名及目錄結構。日後可用 GitHub Release 分享模型，或調整 Git 忽略規則後透過 Git LFS 提交；目前沒有已發布的模型下載連結。
 
 ```text
 model/
-  best.pt                      OBB 蝦體模型
-  best-hbb-yolo11l.pt           單幀 HBB male_line 模型
-  best-hbb-3frame.pt            3-frame 9-channel HBB 模型
-
-predict/
-  run_predict.py                predict 入口
-  exports/                      predict 匯出資料
-  modules/
-    analyzer.py                 predict 分析流程
-    obb_predict.py              OBB predict() 專屬邏輯
-    config.py                   模型路徑與門檻設定
-    id_assigner.py              ID 分配
-    preprocessing.py            OBB crop/拉正
-    reporting.py                CSV、圖表與結果影片輸出
-
-general_track/
-  run_track.py                  一般 track 入口
-  exports/                      一般 track 匯出資料
-  modules/
-    analyzer.py                 track 分析流程
-    obb_track.py                OBB track() 與 track id 抽取
-    ...
-
-multi_channel_track/
-  run_multi_channel_track.py    多通道 track 入口
-  exports/                      多通道 track 匯出資料
-  modules/
-    analyzer.py                 多通道 track 分析流程
-    obb_track.py                OBB track()
-    temporal_hbb.py             3-frame 9-channel HBB 輸入堆疊
-    ...
-
-compare_runs.py                 彙整多次 outputs 結果
-video/                          影片輸入
-Train/                          訓練資料與訓練腳本
+  yolo/
+    best-obb-yolo11m-head_tail.pt       # 新版蝦體、頭、尾 OBB
+    best-hbb-yolo11n.pt                 # 主要入口預設 male_line HBB
+    best-hbb-yolo11s.pt
+    best-hbb-yolo11m.pt
+    best-hbb-yolo11l.pt
+  cnn/
+    best_resnet18-run3.pt               # 已實測的公母分類器
+    best_resnet34-run3.pt
+    best_resnet50-run3.pt
+  water/
+    logistic_regression_model.pth      # 舊水質權重
+  biometrics/
+    final_linear_model_length.pkl      # 尺度換算後的長度 → 校正長度
+    final_linear_model_width.pkl       # 尺度換算後的寬度 → 校正寬度
+    polynomial_regression_model_degree3.pkl  # 長度 → 重量
+    multi_feature_model.pkl            # [長度, 寬度] → 重量
+    provenance.json                    # 原模型來源、係數及雜湊
+  assets-manifest.json                  # 新權重來源與雜湊核對紀錄
 ```
 
-若根目錄仍有舊的 `modules/`，目前三個新入口已不依賴它。確認沒有要保留的本地改動後可以移除。
+新版偵測／分類權重來自使用者提供的模型包（user-provided model bundle），包含上列 **5 個 YOLO 權重**及 3 個 ResNet 權重，已複製至本專案 `model/yolo/` 與 `model/cnn/`。水質及四個回歸模型從原始本機 ShrimpVisionRT 的 `shrimp_OBB/Model` 找回；目前沒有使用隨機或人工拼湊的測試權重。
 
-## 安裝
+權重放在本專案後，執行時不依賴來源資料夾。搬移時請保留 `model/`，並在新電腦重建 `.venv`；虛擬環境不應直接複製使用。模型齊全不代表已適用於新相機，校準狀態見第 7 節。
 
-建議使用 Python 3.9 以上版本。
+## 4. 已設定的預設路徑與選用功能缺檔
+
+表內預設模型路徑均以本專案根目錄為基準。**模型按第 3 節放妥後，前三個入口不需要額外指定模型參數。** 原始設定為專案相對位置，執行時依 `project_paths.py` 所在的專案根目錄動態解析，不綁定使用者名稱或磁碟位置。
+
+### 已設定的預設路徑
+
+| 入口 | OBB 蝦體／頭尾模型 | HBB 或公母分類模型 |
+| --- | --- | --- |
+| `general_track.run_track` | `model/yolo/best-obb-yolo11m-head_tail.pt` | `model/yolo/best-hbb-yolo11n.pt` |
+| `general_track.run_head_tail_track` | `model/yolo/best-obb-yolo11m-head_tail.pt` | `model/cnn/best_resnet18-run3.pt`，預設使用現有 ResNet18 |
+| `predict.run_predict` | `model/yolo/best-obb-yolo11m-head_tail.pt` | `model/yolo/best-hbb-yolo11l.pt` |
+| `multi_channel_track.run_multi_channel_track` | `model/yolo/best-obb-yolo11m-head_tail.pt`，已存在 | `model/best-hbb-3frame.pt`，尚缺，見下表 |
+
+先前程式中的 `model/best.pt` 與 `model/best-hbb-yolo11l.pt` 是過期的預設路徑，已修正為上表的現有位置。**不需要補這兩個檔案，也不需要重新命名現有權重。**
+
+### 僅選用功能需要補檔
+
+| 選用功能 | 尚未提供的權重 | 如何處理 |
+| --- | --- | --- |
+| YOLO 公母分類 | `model/yolo/best-cls-yolo11m-run3.pt` | 頭尾追蹤已預設使用 ResNet18；只有改用 YOLO 分類時，才需提供分類 checkpoint 並用 `--classifier-model` 指定 |
+| 多通道追蹤 | `model/best-hbb-3frame.pt` | 需提供相符的三幀、9 通道 HBB checkpoint，放在此處或用 `--hbb-model` 指定；目前提供的 4 個單幀 HBB 無法替代 |
+
+要選用其他現有模型，可透過 CLI 覆寫，例如 `--hbb-model model/yolo/best-hbb-yolo11n.pt` 或 `--classifier-model model/cnn/best_resnet34-run3.pt`。這些覆寫是選用操作。永久改預設模型位置，可修改 [general_track/modules/config.py](general_track/modules/config.py)、[predict/modules/config.py](predict/modules/config.py) 或 [multi_channel_track/modules/config.py](multi_channel_track/modules/config.py)；頭尾追蹤的預設分類器由 `MODEL_SEX_CLASSIFIER_PATH` 設定。
+
+其他路徑設定：
+
+| 項目 | 如何指定 |
+| --- | --- |
+| 自己的影片／攝影機 | `--video video/sample.mp4` 或 `--video 0` |
+| 結果輸出位置 | `--output-root results`，不存在時程式會建立 |
+| 之後的新水質權重 | `--water-model model/water/logistic_regression_model.pth`，並加 `--water-quality` 或 `--monitoring` |
+| 之後的新長寬重量權重 | `--biometrics-model-dir model/biometrics`，並加 `--biometrics` 或 `--monitoring` |
+
+回歸模型目錄目前須包含上列**四個固定檔名**，即使選長度估重也會載入四個檔案。新模型須相容於目前輸入介面：長度／寬度／單長度估重各接受 1 個特徵，雙特徵估重接受 `[length_mm, width_mm]`。水質 checkpoint 須為原 `Linear(784, 2)` 的 state_dict；換其他模型架構時也需修改載入程式。
+
+所有入口的預設模型位置均從程式所在的專案根目錄解析；自行傳入的相對模型路徑、影片路徑及輸出路徑，則以執行時工作目錄為準，也允許自行指定絕對路徑。執行記錄或錯誤訊息可能顯示解析後的絕對路徑，這不代表原始碼綁定某台電腦。下方指令統一從專案根目錄執行。
+
+## 5. 直接執行 Python
+
+取得包含本次整合修改的倉庫版本後，先進入專案目錄；以下命令皆從這裡執行：
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install ultralytics opencv-python numpy pandas matplotlib tqdm
+git clone https://github.com/NxBLANKxN/Shrimp-Male-Yolo-Tracking.git
+cd Shrimp-Male-Yolo-Tracking
 ```
 
-如果不使用 CUDA，請依照你的環境安裝對應的 PyTorch CPU 版本。
+上述為原倉庫 URL；本次整合目前仍是本機修改，尚未推送 GitHub。發布到自己的 fork 後，請將 clone URL 換成該倉庫，並確認所選分支包含整合版程式。
 
-## 模型與主要參數
+第一次使用先依第 8 節建立並啟用 Python 3.12 環境，再依第 3 節補齊權重，將自己的影片放為 `video/sample.mp4`（或修改 `--video`）。範例影片名稱是佔位路徑，倉庫不附這個檔案。啟用環境後，下列 `python -m ...` 指令可用於 Windows、macOS 或 Linux；預覽需桌面顯示環境。
 
-每個功能資料夾都有自己的 `modules/config.py`。一般 HBB 與多通道 HBB 已分開：
-
-```python
-# predict/modules/config.py
-MODEL_OBB_PATH = "model/best.pt"
-MODEL_HBB_PATH = "model/best-hbb-yolo11l.pt"
-
-# general_track/modules/config.py
-MODEL_OBB_PATH = "model/best.pt"
-MODEL_HBB_PATH = "model/best-hbb-yolo11l.pt"
-
-# multi_channel_track/modules/config.py
-MODEL_OBB_PATH = "model/best.pt"
-MODEL_HBB_3FRAME_PATH = "model/best-hbb-3frame.pt"
-HBB_TEMPORAL_FRAMES = 3
-HBB_TEMPORAL_STEP_FRAMES = 10
-```
-
-共用門檻與常用參數：
-
-```python
-IMGSZ_OBB = 960
-IMGSZ_HBB = 416
-HBB_CONF = 0.30
-
-MALE_RATE_THRESHOLD = 0.50
-OBS_RATE_MIN = 0.25
-VOTE_WINDOW_SECONDS = 10.0
-MALE_LINE_MISSING_GRACE_SECONDS = 1.0
-MIN_OBSERVATIONS_PER_SHRIMP = 3
-ID_MATCH_DISTANCE = 260
-DEFAULT_SKIP_FRAMES = 10
-DEFAULT_TOTAL_SHRIMP = 6
-DEFAULT_KEYFRAMES = 12
-```
-
-預覽投票不是看單一幀，而是使用同一個 `Shrimp_ID` 最近 10 秒的滑動視窗觀測：
+原倉庫已有部分 `video/` 影片由 Git LFS 追蹤。若要使用，需先安裝 Git LFS，再於專案根目錄執行；若未能取得影片，也可直接指定自己的影片：
 
 ```text
-Male_Rate = Male_Hits / Total_Seen
+git lfs install
+git lfs pull
 ```
 
-顯示規則：
+`.gitignore` 不會取消既有影片的 LFS 追蹤。此步驟取得的是已上傳的 LFS 檔案，不會補齊本次未提交的模型。
+
+### 一般追蹤：目前主要可用入口
+
+```powershell
+python -m general_track.run_track --video video/sample.mp4 --monitoring --water-policy report --preview
+```
+
+這是在執行 `general_track/run_track.py`。`-m` 讓 Python 正確處理專案內的模組引用，請從根目錄執行。加 `--max-frames 30` 可只測前 30 幀；`--preview` 會顯示且存檔，改成 `--preview-only` 則不寫任何輸出。
+
+範例使用 `report`，因為本機驗證中，舊水質模型將新仰拍影片的首幀判為混濁。若要混濁就停止，改為 `--water-policy stop`；這也是直接使用 Python CLI 時的預設值。
+
+### 頭尾追蹤：預設使用已存在的 ResNet18
+
+```powershell
+python -m general_track.run_head_tail_track --video video/sample.mp4 --monitoring --water-policy report --preview
+```
+
+### 單幀 predict：預設使用現有 OBB 與 HBB-L
+
+```powershell
+python -m predict.run_predict --video video/sample.mp4 --monitoring --water-policy report --skip-frames 10
+```
+
+### 多通道追蹤：補齊 9 通道模型後執行
+
+下例假設已補好 `model/best-hbb-3frame.pt`，目前不能原樣直接跑：
+
+```powershell
+python -m multi_channel_track.run_multi_channel_track --video video/sample.mp4 --monitoring --water-policy report --preview
+```
+
+多通道入口目前沒有 `--max-frames` 參數，請勿將其他入口的短測試參數直接套用。
+
+### 在 PyCharm 執行
+
+Python Interpreter 選本專案的 `.venv/Scripts/python.exe`（Windows）或 `.venv/bin/python`（macOS／Linux）；Run Configuration 選 **Module name**，填 `general_track.run_track`；Working directory 設為本專案根目錄。Parameters 可填：
 
 ```text
-0.00 ~ 0.24  Female  綠色框
-0.25 ~ 0.49  Obs     灰色框
-0.50 以上    Male    藍色框
+--video video/sample.mp4 --monitoring --water-policy report --preview
 ```
 
-預覽畫面的外框顏色使用 10 秒滑動投票結果，而不是只看當幀 `male_line`。黃色小框仍只代表當幀實際偵測到的 `male_line` 位置。
+各入口完整參數可用 `--help` 查閱。原 `run-all.py` 是尚未更新的舊批次腳本，包含過期的 `--unknown-total`、舊模型位置，也沒有啟用 `--monitoring`，目前請使用上列 Python 指令。
 
-若某隻蝦上一幀或近期剛偵測到 `male_line`，但後續短暫漏偵，系統會等待 `MALE_LINE_MISSING_GRACE_SECONDS`。預設 1 秒內的漏偵不會新增 female 票，也不會拉低投票百分比；超過 1 秒仍沒有偵測到 `male_line`，才會繼續把後續觀測納入投票分母。
+原 `Train/` 目錄保留訓練流程；本次主要整合的是四個推論入口，沒有全面重構訓練腳本。訓練時仍需依對應子目錄準備資料集並設定 `data`、`model`、`dataset` 等參數，從該子目錄執行。部分腳本預設使用 CUDA 裝置 `0`，僅有 CPU 時需在支援的入口指定 `--device cpu`。OBB 的 `data.yaml` 已移除原機器資料夾設定，資料集子路徑以 YAML 所在目錄為基準。
 
-輸出統計的 `per_shrimp_summary.csv` 仍保留整段影片的多幀彙整，用於正式分析結果。
+## 6. 輸出在哪裡、增加哪些欄位
 
-## 執行方式
+| 入口 | 預設輸出根目錄 |
+| --- | --- |
+| `general_track.run_track` | `general_track/exports/run_track/` |
+| `general_track.run_head_tail_track` | `general_track/exports/head_tail_cls/` |
+| `predict.run_predict` | `predict/exports/` |
+| `multi_channel_track.run_multi_channel_track` | `multi_channel_track/exports/<step_frames>FPS/` |
 
-### 1. Predict 正式抽幀分析
+每次執行再依影片名稱與時間建立資料夾。一般追蹤會產生 `result.mp4`、`detections.csv`、`per_shrimp.csv`、滑動投票報表，以及啟用監測後的 `monitoring.json`／`water_quality.csv`。`predict` 與多通道保留 `data/`、`figures/`、`videos/` 結構，新增的兩個監測檔位於該次執行資料夾根目錄。
 
-適合產生正式 CSV、圖表與關鍵幀。
+| 新增欄位 | 意義 |
+| --- | --- |
+| `length_px`, `width_px` | 換算到參考畫布後的 OBB 邊長，非原圖像素 |
+| `length_mm`, `width_mm`, `weight_g` | 回歸估測的長度、框寬與重量 |
+| `width_source` | 目前為 `obb_proxy`，表明寬度來自框的短邊 |
+| `weight_method`, `measurement_status` | 估重方式與量測是否可用；不合理數值會留空 |
+| `water_label`, `water_confidence` | 啟用水質時附加的首幀分類結果 |
+| `measurement_samples`, `mean_length_mm`, `mean_width_mm`, `mean_weight_g` | 每 ID 的有效長度觀測次數，以及各欄位有效值的平均 |
+
+混濁且策略為 `stop` 時，狀態為 `skipped_turbid`；不會移走原始影片。`--preview-only` 不寫影片、CSV 或監測設定。
+
+## 7. 還需要補哪些資料、目前哪些值只供測試
+
+| 待處理項目 | 原因與後續方式 |
+| --- | --- |
+| 新相機的尺寸標定 | 預設沿用舊版參考畫布 `800×450` 與 `2.5 px/mm`。新影片為直式 `990×1398`，目前只做等比例適配；需用實際尺度驗證，以 `--measurement-reference-size 寬 高`、`--pixels-per-mm 數值` 調整，必要時重訓回歸 |
+| 寬度定義驗證 | 舊版寬度來自 segmentation，新版使用 OBB 短邊，兩者不等同；畫面以 `W~` 標示。因此重量預設採原長度單變量模型 |
+| 重量模型驗證／替換 | 目前已有舊權重可跑，但需新資料的實測長寬與重量確認適用性；使用 `--weight-mode length-width` 前，尤其要驗證框寬是否適合雙特徵模型 |
+| 新場景水質驗證／替換 | 舊模型對新仰拍影片輸出 `turbid`，高信心度不代表分類正確；目前測試建議用 `report`，待標註資料評估後再決定是否採 `stop` |
+| 多通道真實推論 | 等相符 9 通道 HBB 權重提供後再測；不能用目前單幀權重替代 |
+
+現在的 mm／g 用於確認整合流程，**尚未宣稱是新拍攝環境下經驗證的實際長寬與重量**。所有 `.py` 接線已完成；權重與標定數據可按上表替換。
+
+## 8. 環境與驗證
+
+本機驗證使用 Python 3.12 與 CPU 版 PyTorch。新的 clone 或搬到新電腦時，請重新建立環境並安裝 [requirements-dev.txt](requirements-dev.txt)。以下從專案根目錄執行。
+
+Windows PowerShell：
 
 ```powershell
-python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --skip-frames 10 --window-sec 10
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m ensurepip --upgrade
+python -m pip install -r requirements-dev.txt
+# albumentations 會安裝 headless OpenCV，需改回桌面版以支援預覽：
+python -m pip uninstall -y opencv-python-headless
+python -m pip install --force-reinstall --no-deps "opencv-python>=4.10,<5"
 ```
 
-未知總數時，可使用動態 ID：
+若 PowerShell 禁止執行啟用腳本，可省略啟用，把命令中的 `python` 換成 `.\.venv\Scripts\python.exe`。
+
+macOS／Linux shell（先安裝 Python 3.12）：
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m ensurepip --upgrade
+python -m pip install -r requirements-dev.txt
+python -m pip uninstall -y opencv-python-headless
+python -m pip install --force-reinstall --no-deps 'opencv-python>=4.10,<5'
+```
+
+`scikit-learn` 固定為原回歸模型的 `1.6.1`。Windows 另有 `setup-monitoring.ps1` 可選用來安裝環境。本次已完成 Windows 實測；macOS／Linux 指令是環境建立方式，尚未在這兩個系統實測推論。
+
+本次整合驗證：**80 項自動測試通過**；一般追蹤、頭尾／ResNet、單幀分析已使用真實權重與影片短測，並驗證水質混濁停止。這些是程式與流程測試，不是新場景的準確度評估。
+
+完整測試包含真實水質及回歸權重的驗證，因此重新 clone 後須先備齊第 3 節的原水質及四個回歸模型，再執行以下命令；只有程式碼的 clone 尚不能完整重現全部測試。
 
 ```powershell
-python -m predict.run_predict --video "video\未知桶.mp4" --unknown-total --skip-frames 10
+python -m pytest tests -q
 ```
 
-也可先用 OBB-only 預掃描估計總蝦數：
-
-```powershell
-python -m predict.run_predict --video "video\未知桶.mp4" --auto-total --skip-frames 10 --auto-total-percentile 90
-```
-
-預覽但不輸出檔案：
-
-```powershell
-python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
-```
-
-### 2. General Track 一般追蹤
-
-`general_track` 會逐幀處理，以維持 YOLO tracker 連續性；目前不開放 `--skip-frames`、`--max-frames`、`--keyframes`、`--window-sec`、`--truth-csv`、`--preview-scale`、`--preview-wait-ms`。
-
-```powershell
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --preview-only
-```
-
-指定 tracker 設定：
-
-```powershell
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --tracker bytetrack.yaml --preview-only
-```
-
-指定一般 track 使用的 HBB `male_line` 模型：
-
-```powershell
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --hbb-model "model\best-hbb-yolo11m.pt" --preview-only
-```
-
-攝影機測試：
-
-```powershell
-python -m general_track.run_track --video 0 --unknown-total --preview-only
-```
-
-### 3. Multi-Channel Track 多通道追蹤
-
-`multi_channel_track` 使用 YOLO track id 建立時間序列 crop buffer，將 3 個時間點的 RGB crop 堆疊成 9-channel HBB 輸入。
-
-```powershell
-python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
-```
-
-調整 temporal HBB 取樣間隔：
-
-```powershell
-python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --hbb-temporal-step-frames 10 --preview-only
-```
-
-## 常用參數
-
-```text
---video                    影片路徑或攝影機編號，例如 0
---output-root              輸出根目錄，預設為各模式資料夾內的 exports
---known-total              使用固定總蝦數
---unknown-total            不限制總蝦數，依偵測/追蹤動態建立 ID，預設啟用
---total-shrimp             固定總蝦數，搭配 --known-total 使用
---preview                  分析時顯示即時預覽並輸出檔案
---preview-only             只顯示預覽，不輸出 CSV/圖表/結果影片
---tracker                  track 入口可指定 Ultralytics tracker YAML
---hbb-model                general_track 可指定 HBB male_line 模型路徑
---gt-male / --gt-female    整桶公母數真值
-```
-
-只有 `predict` 支援：
-
-```text
---skip-frames
---max-frames
---window-sec
---truth-csv
---preview-scale
---preview-wait-ms
---auto-total
---auto-total-percentile
---auto-total-skip-frames
---auto-total-max-frames
-```
-
-只有 `multi_channel_track` 支援：
-
-```text
---hbb-temporal-step-frames
-```
-
-## ID 指派
-
-`predict` 使用蝦體中心點距離配對，將偵測結果分配到 `Shrimp_ID`。
-
-`general_track` 和 `multi_channel_track` 預設使用 `--tracker bytetrack.yaml`，先由 YOLO `track()` / ByteTrack 產生 tracker id，再映射到固定或動態 `Shrimp_ID`。
-
-原本自訂的 ID 回朔與外觀重連已移除。track 模式不再用中心點距離把新的 tracker id 回接到舊 ID；若 ByteTrack 產生新的 track id，系統會依目前模式建立新的 `Shrimp_ID` 或在固定總數已滿時標記 `overflow`。
-
-若使用 `--known-total --total-shrimp 6`，固定 ID 範圍為：
-
-```text
-ID1 ~ ID6
-```
-
-同一幀超出固定總數的偵測會標記為：
-
-```text
-ID_Status = overflow
-Include_In_Stats = False
-```
-
-overflow 仍會保留在 `detections.csv`，但不納入每隻蝦統計。
-
-## 輸出
-
-每次正式分析會建立：
-
-```text
-<mode>/exports/<video_name>/analysis_<timestamp>/
-  data/
-    bucket_summary.csv
-    per_shrimp_summary.csv
-    detections.csv
-    time_window_summary.csv
-    reliability_summary.csv
-    evaluation_summary.csv
-    error_cases.csv
-    truth_template.csv
-    auto_total_counts.csv       使用 --auto-total 時產生
-    auto_total_summary.csv      使用 --auto-total 時產生
-    confusion_matrix.csv        使用 --truth-csv 時產生
-  figures/
-    sex_ratio_summary.png
-    per_shrimp_male_rate.png
-    per_shrimp_detection_counts.png
-    per_id_male_probability_10s.png
-    temporal_sex_ratio.png
-    auto_total_counts.png       使用 --auto-total 時產生
-    single_vs_multiframe_accuracy.png  使用 --truth-csv 時產生
-    confusion_matrix.png        使用 --truth-csv 時產生
-  videos/
-    result_video.mp4
-```
-
-預設輸出根目錄：
-
-```text
-predict/exports/
-general_track/exports/<obb_model>_and_<hbb_model>/
-multi_channel_track/exports/<step_frames>FPS/
-```
-
-例如：
-
-```text
-multi_channel_track/exports/30FPS/公母蝦仰拍-1/analysis_<timestamp>/
-multi_channel_track/exports/10FPS/公母蝦仰拍-1/analysis_<timestamp>/
-
-general_track/exports/yolo11m-obb_and_yolo11m-hbb/公母蝦仰拍-1/analysis_<timestamp>/
-general_track/exports/yolo11m-obb_and_yolo11s-hbb/公母蝦仰拍-1/analysis_<timestamp>/
-```
-
-### 主要 CSV
-
-```text
-bucket_summary.csv
-  整桶結果：Pred_Male, Pred_Female, Unknown, Male_Ratio_Pct, 使用模式、模型路徑與主要門檻
-
-per_shrimp_summary.csv
-  每隻蝦統計：Total_Seen, Male_Hits, Male_Rate_Pct, Final_Label, Track_IDs, Enough_Evidence
-
-detections.csv
-  每幀每個偵測：Frame, Time_Sec, Shrimp_ID, Track_ID, Pred_Label, Male_Conf, Vote_Male_Rate_Pct, ID_Status, Box 座標
-
-reliability_summary.csv
-  不需要人工真值的可靠性摘要：ID coverage、overflow rate、forced ID rate、male_line detection rate
-
-truth_template.csv
-  人工標記模板。填入 True_Label 後可用 --truth-csv 重新分析產生準確率與混淆矩陣
-```
-
-### 新增匯出項目
-
-```text
-videos/result_video.mp4
-  每個分析幀的標註結果影片。
-
-figures/per_shrimp_detection_counts.png
-  每個 Shrimp_ID 的被辨識總次數與 male_line 公蝦性徵總次數長條圖。
-
-figures/per_id_male_probability_10s.png
-  每 10 秒區間中，每個 Shrimp_ID 的公蝦機率折線圖。
-```
-
-## 人工真值與評估
-
-第一次分析後，系統會輸出：
-
-```text
-<mode>/exports/<video_name>/analysis_<timestamp>/data/truth_template.csv
-```
-
-在 `True_Label` 填入 `Male` 或 `Female` 後重新執行：
-
-```powershell
-python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --truth-csv "outputs\<video>\analysis_<timestamp>\data\truth_template.csv"
-```
-
-提供 `--truth-csv` 後會額外輸出：
-
-```text
-single_vs_multiframe_accuracy.png
-confusion_matrix.csv
-confusion_matrix.png
-error_cases.csv
-```
-
-若只知道整桶公母數，可以用：
-
-```powershell
-python -m predict.run_predict --video "video\公母蝦仰拍-1.mp4" --known-total --total-shrimp 6 --gt-male 3 --gt-female 3
-```
-
-## 多次結果彙整
-
-彙整所有分析：
-
-```powershell
-python compare_runs.py --outputs outputs
-```
-
-只取每部影片最新一次：
-
-```powershell
-python compare_runs.py --outputs outputs --latest-only
-```
-
-額外輸出比較圖：
-
-```powershell
-python compare_runs.py --outputs outputs --latest-only --extra-plots
-```
-
-輸出位置：
-
-```text
-outputs/comparison/
-  model_comparison_summary.csv
-  per_video_performance.png
-  combined_confusion_matrix.csv
-  combined_confusion_matrix.png    使用 --extra-plots 時產生
-  count_accuracy_by_model.png      使用 --extra-plots 時產生
-```
-
-## 注意事項
-
-- `Shrimp_ID` 是系統分配的統計 ID，不保證等於真實生物個體 ID。
-- 水中遮擋、重疊、快速移動會造成 ID switch 或 forced ID。
-- `Forced_ID_Rate_Pct` 偏高代表該 ID 統計可靠性較低。
-- 最終公母判定應看 `per_shrimp_summary.csv` 的多幀彙整與結果影片，不建議只看單一幀。
-- `preview-only` 不會建立 outputs。
-- `general_track` 與 `multi_channel_track` 會逐幀處理，速度通常比 `predict` 抽幀慢。
+詳見[完整整合指南](docs/monitoring-integration.md)、[本機驗證記錄](docs/monitoring-validation.md)、[模型清單與來源](model/assets-manifest.json)。[原倉庫 README](docs/README-original.md)另行保留作歷史參考，舊指令與目前程式不一致時，以本頁及各入口 `--help` 為準。

@@ -1,5 +1,7 @@
 import argparse
 
+from shrimp_monitoring.cli import add_monitoring_arguments, monitoring_from_args
+
 from .modules.analyzer import ShrimpSexRatioAnalyzer
 from .modules.config import (
     DEFAULT_KEYFRAMES,
@@ -31,12 +33,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview-only", action="store_true", help="Only show preview; do not write outputs.")
     parser.add_argument("--preview-scale", type=float, default=0.75, help="Scale factor for the live preview window.")
     parser.add_argument("--preview-wait-ms", type=int, default=1, help="Delay in milliseconds for each preview frame.")
+    parser.add_argument("--obb-model", help="Override the new project's OBB detector weights.")
+    parser.add_argument("--hbb-model", help="Override the new project's male-line HBB weights.")
+    add_monitoring_arguments(parser)
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    ShrimpSexRatioAnalyzer().run(
+    ShrimpSexRatioAnalyzer(
+        monitoring=monitoring_from_args(args),
+        obb_model_path=args.obb_model,
+        hbb_model_path=args.hbb_model,
+    ).run(
         video_path=args.video,
         output_root=args.output_root,
         total_shrimp=args.total_shrimp,

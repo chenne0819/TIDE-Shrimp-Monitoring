@@ -1,9 +1,11 @@
 import argparse
 import sys
 
+from shrimp_monitoring.cli import add_monitoring_arguments, monitoring_from_args
+
 from .modules.config import (
     MODEL_HEAD_TAIL_OBB_PATH,
-    MODEL_YOLO_CLS_PATH,
+    MODEL_SEX_CLASSIFIER_PATH,
 )
 from .modules.head_tail_pipeline import HeadTailShrimpAnalyzer
 
@@ -17,8 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--classifier-model",
         "--cnn-model",
         dest="classifier_model",
-        default=MODEL_YOLO_CLS_PATH,
-        help="ResNet or YOLO classification checkpoint.",
+        default=MODEL_SEX_CLASSIFIER_PATH,
+        help="ResNet or YOLO classification checkpoint. Default: supplied ResNet18.",
     )
     parser.add_argument("--tracker", default="bytetrack.yaml", help="Ultralytics ByteTrack config. Default: bytetrack.yaml")
     parser.add_argument("--conf", type=float, default=0.5)
@@ -28,13 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview-only", action="store_true", help="Show preview without saving video, CSV files, or crops.")
     parser.add_argument("--debug", action="store_true", help="Start with abdomen debug tiles attached to the main preview; press D to toggle.")
     parser.add_argument("--save-crops", action="store_true", help="Save the exact abdomen crops sent to the sex classifier.")
+    add_monitoring_arguments(parser)
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    analyzer = HeadTailShrimpAnalyzer(args.obb_model, args.classifier_model)
     try:
+        analyzer = HeadTailShrimpAnalyzer(
+            args.obb_model, args.classifier_model, monitoring=monitoring_from_args(args)
+        )
         paths = analyzer.run(
             video=args.video,
             output_root=args.output_root,
@@ -47,12 +52,14 @@ def main() -> None:
             debug=args.debug,
             save_crops=args.save_crops,
         )
-    except RuntimeError as error:
+    except (RuntimeError, ValueError, FileNotFoundError) as error:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(1) from None
+    if paths.get("skipped"):
+        print("Skipped: the first frame was classified as turbid water.")
     if paths["output_dir"]:
         print(f"Output: {paths['output_dir']}")
-    else:
+    elif not paths.get("skipped"):
         print("Preview complete. No outputs were saved.")
 
 

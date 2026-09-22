@@ -9,6 +9,8 @@ import numpy as np
 from tqdm import tqdm
 from ultralytics import YOLO
 
+from shrimp_monitoring import MonitoringSession, summarize_measurements
+
 from .config import HBB_CONF, IMGSZ_HBB, IMGSZ_OBB, MODEL_HBB_PATH, MODEL_HEAD_TAIL_OBB_PATH
 from .head_tail_common import (
     associated_centers,
@@ -71,10 +73,12 @@ class HbbVotingShrimpAnalyzer:
         obb_model_path: str = MODEL_HEAD_TAIL_OBB_PATH,
         hbb_model_path: str = MODEL_HBB_PATH,
         window_frames: int = WINDOW_FRAMES,
+        monitoring: MonitoringSession | None = None,
     ) -> None:
         self.obb_model_path = obb_model_path
         self.hbb_model_path = hbb_model_path
         self.window_frames = int(window_frames)
+        self.monitoring = monitoring or MonitoringSession()
         self.obb_model = YOLO(obb_model_path)
         validate_head_tail_obb_model(self.obb_model)
         self.hbb_model = YOLO(hbb_model_path)
@@ -206,6 +210,7 @@ class HbbVotingShrimpAnalyzer:
                 "tail_count": len(tail_centers),
                 "direction_source": direction_source,
             }
+            record.update(self.monitoring.measure(polygon, frame.shape))
             records.append(record)
             if window_ready:
                 windows.append(
@@ -236,6 +241,8 @@ class HbbVotingShrimpAnalyzer:
                 2,
                 cv2.LINE_AA,
             )
+            self.monitoring.annotate_measurement(annotated, record, anchor)
+        self.monitoring.annotate_water(annotated)
         return records, windows, annotated, debug_items
 
     @staticmethod
@@ -289,103 +296,118 @@ class HbbVotingShrimpAnalyzer:
         gt: str | None = None,
         number_of_shrimps: int | None = None,
     ) -> dict:
+        self.monitoring.reset()
         source = int(video) if str(video).strip().isdigit() else video
         capture = cv2.VideoCapture(source)
         if not capture.isOpened():
+            capture.release()
             raise FileNotFoundError(f"Cannot open video or camera: {video}")
-        fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        source_name = f"camera_{video}" if isinstance(source, int) else Path(video).stem
-        preview = preview or preview_only
-        debug_enabled = bool(debug)
-        self._display_ids = {}
-        self._next_display_id = 1
-
-        run_dir = Path(output_root) / source_name / datetime.now().strftime("%Y%m%d_%H%M%S")
-        if not preview_only:
-            run_dir.mkdir(parents=True, exist_ok=True)
-        video_path = run_dir / "result.mp4"
-        detections_path = run_dir / "detections.csv"
-        windows_path = run_dir / "sliding_windows.csv"
-        per_shrimp_path = run_dir / "per_shrimp.csv"
-        video_info_path = run_dir / "video_info.csv"
-        vote_summary_path = run_dir / "window_vote_summary.csv"
-
-        vote_state = SlidingVoteState(self.window_frames, grace_frames=max(1, int(round(fps))))
-        all_records: list[dict] = []
-        all_windows: list[dict] = []
         writer = None
-        fixed_video_size = None
-        frame_index = 0
-        processed_frames = 0
-        progress_total = min(frame_count, max_frames) if max_frames and frame_count > 0 else (frame_count or None)
+        preview = preview or preview_only
+        skipped_turbid = False
+        try:
+            fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
+            frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            source_name = f"camera_{video}" if isinstance(source, int) else Path(video).stem
+            debug_enabled = bool(debug)
+            self._display_ids = {}
+            self._next_display_id = 1
 
-        with tqdm(total=progress_total, desc="OBB+HBB tracking", unit="frame", ncols=85) as progress:
-            while max_frames is None or frame_index < max_frames:
-                ok, frame = capture.read()
-                if not ok:
-                    break
-                processed_frames += 1
-                records, windows, annotated, debug_items = self._process_frame(
-                    frame, frame_index, fps, tracker, obb_conf, obb_iou, hbb_conf, vote_state
-                )
-                all_records.extend(records)
-                all_windows.extend(windows)
+            run_dir = Path(output_root) / source_name / datetime.now().strftime("%Y%m%d_%H%M%S")
+            if not preview_only:
+                run_dir.mkdir(parents=True, exist_ok=True)
+            video_path = run_dir / "result.mp4"
+            detections_path = run_dir / "detections.csv"
+            windows_path = run_dir / "sliding_windows.csv"
+            per_shrimp_path = run_dir / "per_shrimp.csv"
+            video_info_path = run_dir / "video_info.csv"
+            vote_summary_path = run_dir / "window_vote_summary.csv"
 
-                export_frame = annotated
-                if debug:
-                    export_frame = combine_preview(annotated, self._make_debug_view(debug_items, frame_index))
-                    if fixed_video_size is None:
-                        fixed_video_size = debug_video_size(export_frame)
-                    export_frame = letterbox(export_frame, fixed_video_size)
-                if writer is None and not preview_only:
-                    height, width = export_frame.shape[:2]
-                    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-                    if not writer.isOpened():
-                        raise RuntimeError(f"Unable to create result video: {video_path}")
-                if writer is not None:
-                    writer.write(export_frame)
+            vote_state = SlidingVoteState(self.window_frames, grace_frames=max(1, int(round(fps))))
+            all_records: list[dict] = []
+            all_windows: list[dict] = []
+            fixed_video_size = None
+            frame_index = 0
+            processed_frames = 0
+            progress_total = min(frame_count, max_frames) if max_frames and frame_count > 0 else (frame_count or None)
 
-                if preview:
-                    preview_image = annotated
-                    if debug_enabled:
-                        preview_image = combine_preview(annotated, self._make_debug_view(debug_items, frame_index))
-                    preview_image = fit_preview_to_screen(preview_image)
-                    key = show_preview_or_raise("Shrimp run_track | D: debug | Q/Esc: quit", preview_image)
-                    if key in {ord("d"), ord("D")}:
-                        debug_enabled = not debug_enabled
-                    elif key in {ord("q"), 27}:
+            with tqdm(total=progress_total, desc="OBB+HBB tracking", unit="frame", ncols=85) as progress:
+                while max_frames is None or frame_index < max_frames:
+                    ok, frame = capture.read()
+                    if not ok:
                         break
+                    if frame_index == 0 and not self.monitoring.check_frame(frame, frame_index, fps):
+                        skipped_turbid = True
+                        break
+                    processed_frames += 1
+                    records, windows, annotated, debug_items = self._process_frame(
+                        frame, frame_index, fps, tracker, obb_conf, obb_iou, hbb_conf, vote_state
+                    )
+                    all_records.extend(records)
+                    all_windows.extend(windows)
 
-                frame_index += 1
-                progress.update(1)
+                    export_frame = annotated
+                    if debug:
+                        export_frame = combine_preview(annotated, self._make_debug_view(debug_items, frame_index))
+                        if fixed_video_size is None:
+                            fixed_video_size = debug_video_size(export_frame)
+                        export_frame = letterbox(export_frame, fixed_video_size)
+                    if writer is None and not preview_only:
+                        height, width = export_frame.shape[:2]
+                        writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+                        if not writer.isOpened():
+                            raise RuntimeError(f"Unable to create result video: {video_path}")
+                    if writer is not None:
+                        writer.write(export_frame)
 
-        capture.release()
-        if writer is not None:
-            writer.release()
-        if preview:
-            cv2.destroyAllWindows()
+                    if preview:
+                        preview_image = annotated
+                        if debug_enabled:
+                            preview_image = combine_preview(annotated, self._make_debug_view(debug_items, frame_index))
+                        preview_image = fit_preview_to_screen(preview_image)
+                        key = show_preview_or_raise("Shrimp run_track | D: debug | Q/Esc: quit", preview_image)
+                        if key in {ord("d"), ord("D")}:
+                            debug_enabled = not debug_enabled
+                        elif key in {ord("q"), 27}:
+                            break
 
-        if preview_only:
-            return {"output_dir": "", "video": "", "detections": "", "sliding_windows": "", "per_shrimp": ""}
+                    frame_index += 1
+                    progress.update(1)
 
-        write_csv(detections_path, all_records)
-        write_csv(windows_path, all_windows)
-        per_shrimp = self._summarize(all_records, gt=gt)
-        write_csv(per_shrimp_path, per_shrimp)
-        video_info_rows = self._video_info_rows(source_name, gt, number_of_shrimps, frame_count, fps, self.window_frames)
-        vote_summary_rows = self._window_vote_summary_rows(source_name, gt, all_windows)
-        write_csv(video_info_path, video_info_rows)
-        write_csv(vote_summary_path, vote_summary_rows)
-        return {
-            "output_dir": str(run_dir),
-            "video": str(video_path),
-            "detections": str(detections_path),
-            "sliding_windows": str(windows_path),
-            "per_shrimp": str(per_shrimp_path),
-            "video_info": str(video_info_path),
-            "window_vote_summary": str(vote_summary_path),
-        }
+
+            skip_status = {"status": "skipped_turbid", "monitoring_status": "skipped_turbid", "skipped": True} if skipped_turbid else {}
+            if preview_only:
+                return {"output_dir": "", "video": "", "detections": "", "sliding_windows": "", "per_shrimp": "", **skip_status}
+
+            write_csv(detections_path, all_records)
+            write_csv(windows_path, all_windows)
+            per_shrimp = self._summarize(all_records, gt=gt)
+            write_csv(per_shrimp_path, per_shrimp)
+            video_info_rows = self._video_info_rows(source_name, gt, number_of_shrimps, frame_count, fps, self.window_frames)
+            vote_summary_rows = self._window_vote_summary_rows(source_name, gt, all_windows)
+            if skipped_turbid:
+                video_info_rows[0]["Valid Windows"] = 0
+                vote_summary_rows[0]["Final Prediction"] = ""
+                vote_summary_rows[0]["Status"] = "skipped_turbid"
+            write_csv(video_info_path, video_info_rows)
+            write_csv(vote_summary_path, vote_summary_rows)
+            return {
+                "output_dir": str(run_dir),
+                "video": str(video_path) if writer is not None else "",
+                "detections": str(detections_path),
+                "sliding_windows": str(windows_path),
+                "per_shrimp": str(per_shrimp_path),
+                "video_info": str(video_info_path),
+                "window_vote_summary": str(vote_summary_path),
+                **self.monitoring.export(run_dir),
+                **skip_status,
+            }
+        finally:
+            capture.release()
+            if writer is not None:
+                writer.release()
+            if preview:
+                cv2.destroyAllWindows()
 
     @staticmethod
     def _normalize_gt(gt: str | None) -> str:
@@ -469,5 +491,6 @@ class HbbVotingShrimpAnalyzer:
             }
             if gt_label:
                 row["GT"] = gt_label
+            row.update(summarize_measurements(items))
             rows.append(row)
         return rows

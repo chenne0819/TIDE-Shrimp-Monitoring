@@ -1,7 +1,9 @@
 # modules/config.py
 
-MODEL_OBB_PATH = "model/best.pt"
-MODEL_HBB_PATH = "model/best-hbb-yolo11l.pt"
+from project_paths import project_path
+
+MODEL_OBB_PATH = project_path("model/yolo/best-obb-yolo11m-head_tail.pt")
+MODEL_HBB_PATH = project_path("model/yolo/best-hbb-yolo11l.pt")
 
 IMGSZ_OBB = 960
 IMGSZ_HBB = 416

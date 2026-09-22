@@ -2,6 +2,13 @@
 __pycache__
 .agents
 .codex
+.pytest_cache/
+validation_outputs/
+# Model assets are local; their hashes and sources are documented separately.
+model/**/*.pkl
+general_track/exports/
+multi_channel_track/exports/
+predict/exports/
 
 # Local datasets, model weights, and training artifacts.
 **/*.7z

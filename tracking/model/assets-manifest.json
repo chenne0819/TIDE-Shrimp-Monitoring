@@ -1,0 +1,53 @@
+{
+  "detector_source": "User-provided model bundle (model/yolo and model/cnn)",
+  "detector_assets": [
+    {
+      "file": "cnn/best_resnet18-run3.pt",
+      "bytes": 44790475,
+      "sha256": "f9e71bf4d3747f37af79833978c54bd446dbaecc03707de85915d36df7c2c1ef"
+    },
+    {
+      "file": "cnn/best_resnet34-run3.pt",
+      "bytes": 85284939,
+      "sha256": "a981ea6bfcb04e30159ad2ec1680f85dd7a4163388c22946ed06ba8cf26a99ba"
+    },
+    {
+      "file": "cnn/best_resnet50-run3.pt",
+      "bytes": 94368803,
+      "sha256": "560349db48e8583402459760f6823c3d50f89f752e736a2bea185ed0ccae88f2"
+    },
+    {
+      "file": "yolo/best-hbb-yolo11l.pt",
+      "bytes": 51186713,
+      "sha256": "6a7dd912c6b5a091b799f1b764cba5ec487d6593fb159b2decc90a096ae684be"
+    },
+    {
+      "file": "yolo/best-hbb-yolo11m.pt",
+      "bytes": 40566124,
+      "sha256": "30ed6d560209012694551c059a5ba4c3aadedd10fca969e50dbd595d624dd0a2"
+    },
+    {
+      "file": "yolo/best-hbb-yolo11n.pt",
+      "bytes": 5524634,
+      "sha256": "e58af81af26acdb2e7288372201ae4d69de39f2c2b145dd08e6e499f90325f4b"
+    },
+    {
+      "file": "yolo/best-hbb-yolo11s.pt",
+      "bytes": 19227034,
+      "sha256": "b1882ddcd131723bf8a9eb879b8d83681fa309e967e35a0a653793d21b4938e3"
+    },
+    {
+      "file": "yolo/best-obb-yolo11m-head_tail.pt",
+      "bytes": 42307733,
+      "sha256": "4e6cf18b08b4c4f8337eb7a6aac0cca22e30ab483905a4de38c2b3707c27f7ab"
+    }
+  ],
+  "water_source": "Original local ShrimpVisionRT shrimp_OBB/Model/logistic_regression_model.pth",
+  "water_sha256": "86d282fec163d8bf06c2875da646343a5e9756d9d1a9dfab0540aac03b9ad5ed",
+  "biometrics_provenance": "biometrics/provenance.json",
+  "not_provided": [
+    "model/yolo/best-cls-yolo11m-run3.pt",
+    "model/best-hbb-3frame.pt"
+  ],
+  "note": "Original user-provided model bytes copied unchanged. No synthetic deployed weights."
+}

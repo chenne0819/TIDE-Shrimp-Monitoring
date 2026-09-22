@@ -66,3 +66,5 @@ playwright-report/
 *.mkv
 *.m4v
 *.webm
+# Local demo footage and stills derived from private recordings.
+web/frontend/public/demo/

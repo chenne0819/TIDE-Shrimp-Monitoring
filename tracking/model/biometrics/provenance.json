@@ -1,0 +1,94 @@
+{
+  "source_repository": "https://github.com/chenne0819/ShrimpVisionRT",
+  "source_revision": "dd876980b83e42986b54c1ebeb52017c0728f113",
+  "local_model_source": "Original local ShrimpVisionRT shrimp_OBB/Model directory",
+  "recovery_note": "Upstream omits these model assets. Recovered unchanged from the user's original local shrimp_OBB/Model directory. The local shrimp_OBB/utils/plots.py is SHA-256-identical to the cloned revision.",
+  "source_plots_sha256": "a38710b818bafd0089da93c8f16fcb2fc364d347458e0a4961cd43b941fb6f03",
+  "saved_sklearn_version": "1.6.1",
+  "reference_size_width_height": [
+    800,
+    450
+  ],
+  "pixels_per_mm": 2.5,
+  "reference_mapping": "uniform aspect-preserving fit: min(reference_width/frame_width, reference_height/frame_height); padding translation omitted for edge measurements",
+  "reference_mapping_note": "Same-aspect resized frames preserve the original reference pixel measurements. Other aspect ratios use a reference-canvas adaptation, not exact legacy geometry or camera calibration. Uniform scaling prevents a shrimp's estimated size from changing solely with its rotation.",
+  "legacy_uniform_gain_evidence": "shrimp_OBB/utils/general.py:636 (scale_polys uses one uniform gain when undoing letterboxing)",
+  "reference_evidence": [
+    "shrimp_OBB/detect_norfair_optimize.py:345",
+    "shrimp_OBB/detect_norfair_optimize_elec_time.py:391"
+  ],
+  "conversion_evidence": "shrimp_OBB/utils/plots.py:317-327",
+  "width_source_note": "New detector OBB short edge is a proxy, unlike the original separate segmentation width. All estimates require camera/geometry validation. Default weight uses only calibrated length.",
+  "models": {
+    "final_linear_model_length.pkl": {
+      "sha256": "23eb77f33e77098c1304c917cdc2a141d2a71acc536061523af9c037e8a046ac",
+      "size_bytes": 560,
+      "estimator": "LinearRegression",
+      "n_features_in": 1,
+      "coefficients": [
+        1.0834269442946212
+      ],
+      "intercept": 9.892120613185483
+    },
+    "final_linear_model_width.pkl": {
+      "sha256": "0b48b4a7de3e136ee745cfdf3d4e9ab7b93f287f5a9b459fb063576f8b72b210",
+      "size_bytes": 560,
+      "estimator": "LinearRegression",
+      "n_features_in": 1,
+      "coefficients": [
+        0.9919521572883516
+      ],
+      "intercept": -2.85055944571843
+    },
+    "polynomial_regression_model_degree3.pkl": {
+      "sha256": "16bab92badc9e0b3ebad8e813b46cbd4dcefd4cfa6996053d9f8b2ddbbb81124",
+      "size_bytes": 946,
+      "estimator": "Pipeline",
+      "n_features_in": 1,
+      "coefficients": [
+        0.0,
+        0.5161553237149435,
+        -0.003852157388574494,
+        1.6543771589438983e-05
+      ],
+      "intercept": -23.16071624487354,
+      "polynomial_features": [
+        "1",
+        "length_mm",
+        "length_mm^2",
+        "length_mm^3"
+      ]
+    },
+    "multi_feature_model.pkl": {
+      "sha256": "eee369a2d97de1c26185f66d9d2bebb3732b808b523dcc07ab9147b8d87c24c2",
+      "size_bytes": 1042,
+      "estimator": "Pipeline",
+      "n_features_in": 2,
+      "coefficients": [
+        0.0,
+        -1.1131222242540686,
+        12.778208439904045,
+        0.025144353913249446,
+        -0.36649275442594736,
+        1.006750893970391,
+        -0.00013123940949233415,
+        0.002511936412921162,
+        -0.013308609501376405,
+        0.02398866971406889
+      ],
+      "intercept": -5.069604891345179,
+      "polynomial_features": [
+        "1",
+        "length_mm",
+        "width_mm",
+        "length_mm^2",
+        "length_mm width_mm",
+        "width_mm^2",
+        "length_mm^3",
+        "length_mm^2 width_mm",
+        "length_mm width_mm^2",
+        "width_mm^3"
+      ]
+    }
+  }
+}

@@ -1,6 +1,8 @@
 import argparse
 import sys
 
+from shrimp_monitoring.cli import add_monitoring_arguments, monitoring_from_args
+
 from .modules.config import HBB_CONF, MODEL_HBB_PATH, MODEL_HEAD_TAIL_OBB_PATH
 from .modules.track_pipeline import HbbVotingShrimpAnalyzer, WINDOW_FRAMES
 
@@ -24,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true", help="Attach/export rectified shrimp crops with male_line boxes.")
     parser.add_argument("--gt", choices=["Male", "Female", "male", "female", "M", "F"], help="Ground-truth sex label for this run.")
     parser.add_argument("--number-of-shrimps", type=int, help="Ground-truth shrimp count for exported video_info.csv.")
+    add_monitoring_arguments(parser)
     return parser
 
 
@@ -34,6 +37,7 @@ def main() -> None:
             obb_model_path=args.obb_model,
             hbb_model_path=args.hbb_model,
             window_frames=args.window_frames,
+            monitoring=monitoring_from_args(args),
         ).run(
             video=args.video,
             output_root=args.output_root,
@@ -48,12 +52,14 @@ def main() -> None:
             gt=args.gt,
             number_of_shrimps=args.number_of_shrimps,
         )
-    except RuntimeError as error:
+    except (RuntimeError, ValueError, FileNotFoundError) as error:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(1) from None
+    if paths.get("skipped"):
+        print("Skipped: the first frame was classified as turbid water.")
     if paths["output_dir"]:
         print(f"Output: {paths['output_dir']}")
-    else:
+    elif not paths.get("skipped"):
         print("Preview complete. No outputs were saved.")
 
 
