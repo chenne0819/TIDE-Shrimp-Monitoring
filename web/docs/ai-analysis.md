@@ -4,6 +4,10 @@ Open `/assistant` from the AI-analysis navigation item. Desktop shows results in
 
 A response can produce up to eight charts and five KPIs (length, width, weight, tracked IDs, videos). Boards include dates, ponds, sample counts, aggregation, limitations and source videos, with table views and CSV export. PostgreSQL persists conversations and boards.
 
+[![AI analysis with a monthly comparison chart and conversation side by side](screenshots/assistant.jpg)](screenshots/assistant.jpg)
+
+The screenshot shows an actual model response using synthetic measurements, with the chart area scrolled to a length comparison. No private recordings or production conversations are included. For more views, see the [interface tour](../README.md#interface-tour).
+
 ## Provider configuration
 
 Edit `web/.env` and restart the API. See [.env.example](../.env.example); never expose keys in the frontend or Git.

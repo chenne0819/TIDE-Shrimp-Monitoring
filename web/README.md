@@ -43,6 +43,36 @@ Estimated width is available in the overview KPI, width trend/distribution tabs 
 
 Videos may also arrive through the API or inbox; see the [API contract](docs/api-contract.md) and [backend guide](backend/README.md).
 
+## Interface tour
+
+These are screenshots of the running application. The dashboard and AI examples use synthetic measurements; no private recordings, account details or production conversations are shown. The interface is in Traditional Chinese. Click an image to view it at full size.
+
+### Landing page
+
+A scroll-driven underwater scene introduces video tracking, body-size estimates and water appearance classification. The image below captures one frame of the animation.
+
+[![TIDE landing page with navigation, upload action and animated underwater scene](docs/screenshots/landing.jpg)](docs/screenshots/landing.jpg)
+
+### Dashboard
+
+Filter by capture date and pond, then review tracked IDs, estimated length, width and weight, daily trends and clear/turbid video counts. The example below is scrolled to the measurements and trend chart.
+
+[![Demo dashboard showing five measurement cards, a daily trend and water appearance counts](docs/screenshots/dashboard.jpg)](docs/screenshots/dashboard.jpg)
+
+### Upload and capture settings
+
+Choose a video and record its pond, capture date and time. Select the tracking mode and whether analysis should continue when the first frame is classified as turbid. This form is shown before selecting a file.
+
+[![Video upload area beside pond, capture time, analysis mode and turbid-water handling settings](docs/screenshots/upload.jpg)](docs/screenshots/upload.jpg)
+
+### AI analysis
+
+Ask for a comparison in natural language. Results appear beside the conversation, with execution steps, chart/table views and CSV export. This example used the configured AI model with synthetic measurements to create a monthly length comparison and a daily weight trend; the visible chart is the length comparison.
+
+[![AI workspace with a monthly length comparison chart, the user's question and completed execution steps](docs/screenshots/assistant.jpg)](docs/screenshots/assistant.jpg)
+
+See [AI analysis](docs/ai-analysis.md) for model configuration, chart templates and supported statistics.
+
 ## First-time setup
 
 Requirements: Node.js 22+, Python 3.12, PostgreSQL installed locally or through Docker, and a working `tracking/` installation. Inference requires its model files and separate Python environment; the website does not download or train weights.
