@@ -2,7 +2,9 @@
 
 An integrated shrimp video analysis and monitoring system: detection, tracking and sex classification, water appearance classification, size and weight estimates, and a web workspace for reviewing measurements and asking questions about the data.
 
-[![TIDE landing page with an underwater shrimp scene](web/docs/screenshots/landing.jpg)](web/README.md#interface-tour)
+[![Animated TIDE homepage showing the underwater camera moving and a shrimp swimming across the scene](web/docs/screenshots/landing.gif)](web/README.md#interface-tour)
+
+The preview plays the complete homepage scroll animation, then rewinds and loops. [View the static image](web/docs/screenshots/landing.jpg).
 
 See the [interface tour](web/README.md#interface-tour) for dashboard, upload and AI-analysis screenshots. Measurement examples use synthetic data; the landing scene is an illustration.
 
