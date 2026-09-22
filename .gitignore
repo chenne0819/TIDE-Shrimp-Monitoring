@@ -1,53 +1,68 @@
-.venv
-__pycache__
-.agents
-.codex
+# Private environment and authentication files. Only templates may be published.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.codex/
+.agents/
+.ssh/
+.aws/
+.azure/
+.config/
+auth.json
+credentials.json
+token.json
+tokens.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+.npmrc
+.pypirc
+.netrc
+.git-credentials
 
-# Local datasets, model weights, and training artifacts.
-**/*.7z
-**/*.pt
-**/*.onnx
-**/*.engine
-**/*.tflite
-**/*.pth
-**/*.pb
-**/*.weights
-**/*.mp4
-**/*.avi
-**/*.mov
-**/*.mkv
-**/*.npy
-**/*.cache
-Train/male-female-shrimp/**/*dataset*/
-Train/male-female-shrimp/**/shrimp_temporal_*/
-Train/male-female-shrimp/**/runs/
-general_track/outputs/
-multi_channel_track/outputs/
-predict/outputs/
-general_track/**/*.csv
-multi_channel_track/**/*.csv
-predict/**/*.csv
-general_track/**/*.png
-multi_channel_track/**/*.png
-predict/**/*.png
+# Local runtimes, generated bundles, caches, and machine-specific configuration.
+.venv/
+venv/
+node_modules/
+.next/
+out/
+.local/
+.idea/
+.vscode/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.tsbuildinfo
+*.log
+.DS_Store
+Thumbs.db
 
-# 權重與模型檔案
-# **/*.pt
-# **/*.onnx
-# **/*.engine
-# **/*.tflite
-# **/*.pth
-# **/*.pb
-# **/*.weights
-
-# 影片檔案
-# **/*.mp4
-# **/*.avi
-# **/*.mov
-# **/*.mkv
-
-# 視覺化輸出 (如果你不想備份圖表和 JSON)
-
-
-# Ultralytics 產生的訓練日誌 (runs/)
-runs
+# Private recordings, analysis data, local databases, and model weights.
+storage/
+validation/
+validation_outputs/
+test-results/
+playwright-report/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.onnx
+*.engine
+*.tflite
+*.weights
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.m4v
+*.webm
