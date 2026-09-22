@@ -1,6 +1,6 @@
-# 原倉庫 README（歷史參考）
+# Original upstream README (historical reference)
 
-以下保留 clone 時的原始說明，部分路徑、參數及入口已與目前程式不同。請以[目前 README](../README.md)與[整合指南](monitoring-integration.md)為準。
+The archived body below preserves the upstream README at clone time. Some paths, arguments and entry points have changed. Use the [current README](../README.md) and [integration guide](monitoring-integration.md) for maintained setup instructions.
 
 ---
 

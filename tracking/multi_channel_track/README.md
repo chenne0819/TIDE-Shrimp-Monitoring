@@ -1,38 +1,34 @@
-# Multi Channel Track
+# Temporal multi-channel tracking
 
-YOLO OBB `track()` + 3-frame 9-channel HBB 分析入口。此模式會依 track id 累積 crop buffer，將 3 個時間點的 RGB crop 堆疊成 9-channel 輸入，用於 temporal HBB `male_line` 偵測。
+This entry point combines YOLO OBB `track()` with a three-frame, nine-channel HBB. It buffers rectified RGB crops per track ID and stacks crops from three time points for temporal `male_line` detection. It also contains the shared [water/size/weight monitoring hooks](../docs/monitoring-integration.md).
 
-## Run
+**A compatible nine-channel HBB checkpoint is required and was not available for the recorded real-model validation.** Ordinary single-frame, three-channel HBB weights cannot substitute for it. The code integration has automated coverage, but real temporal inference has not been verified. No private weights are included in this publication.
 
-```powershell
-python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --preview-only
-```
-
-調整 temporal 取樣間隔：
+From the monorepo root, `cd tracking`, activate its environment and follow the [model setup](../README.md#private-model-assets-required-after-cloning). After supplying your own video and the compatible checkpoint:
 
 ```powershell
-python -m multi_channel_track.run_multi_channel_track --video "video\公母蝦仰拍-1.mp4" --unknown-total --hbb-temporal-step-frames 10 --preview-only
+python -m multi_channel_track.run_multi_channel_track --video video/sample.mp4 --monitoring --water-policy report --preview-only
+
+# Select a different spacing between the three temporal crops.
+python -m multi_channel_track.run_multi_channel_track --video video/sample.mp4 --hbb-temporal-step-frames 10 --monitoring --water-policy report --preview-only
 ```
 
-目前此入口不開放 `--skip-frames`、`--max-frames`、`--keyframes`、`--window-sec`、`--truth-csv`、`--preview-scale`、`--preview-wait-ms`。
+Defaults are `model/yolo/best-obb-yolo11m-head_tail.pt` and `model/best-hbb-3frame.pt`, resolved from the tracking directory. Override with `--obb-model` and `--hbb-model`; explicit relative overrides use the working directory. Dynamic IDs (`--unknown-total`) are the default; use `--known-total --total-shrimp N` when supplying an expected count.
 
-正式輸出會存到 `multi_channel_track/exports/`，包含 `videos/result_video.mp4`、每 ID 次數長條圖與每 10 秒公蝦機率折線圖。
+This CLI does not expose `--skip-frames`, `--max-frames`, `--keyframes`, `--window-sec`, `--truth-csv`, `--preview-scale` or `--preview-wait-ms`. Do not copy those options from predict/general-tracking examples. Preview requires a display and GUI OpenCV. Remove `--preview-only` to save output, optionally adding `--preview` to display it as well.
 
-輸出會依 `--hbb-temporal-step-frames` 分組，例如：
+Output is grouped by temporal frame spacing, for example `multi_channel_track/exports/10FPS/<video_name>/analysis_<timestamp>/`. The inherited `FPS` folder suffix is a naming convention for **frame spacing**, not a measured processing frame rate. Existing exports include `videos/result_video.mp4`, per-ID count charts and time-window sex summaries. Monitoring files appear at the run root; preview-only writes none.
 
-```text
-multi_channel_track/exports/30FPS/公母蝦仰拍-1/analysis_<timestamp>/
-multi_channel_track/exports/10FPS/公母蝦仰拍-1/analysis_<timestamp>/
-```
+Water checks the first frame only. Direct Python policy defaults to `stop`; examples use `report`. Size and weight retain legacy calibration and need physical validation for new cameras; the OBB short edge is a width proxy.
 
-## Local Modules
+| Module | Responsibility |
+| --- | --- |
+| `modules/analyzer.py` | Temporal tracking flow and monitoring hooks |
+| `modules/obb_track.py` | OBB `track()` and track-ID extraction |
+| `modules/temporal_hbb.py` | Nine-channel stacking and coordinate recovery |
+| `modules/config.py` | Default paths and thresholds |
+| `modules/id_assigner.py` | Tracker-to-shrimp ID mapping |
+| `modules/preprocessing.py` | OBB crop rectification |
+| `modules/reporting.py` | CSV, figures and result video |
 
-```text
-modules/analyzer.py      多通道 track 分析流程
-modules/obb_track.py     OBB track() 與 track id 抽取
-modules/temporal_hbb.py  3-frame 9-channel 輸入堆疊與座標還原
-modules/config.py        模型路徑與門檻
-modules/id_assigner.py   ByteTrack id 到 Shrimp_ID 的映射
-modules/preprocessing.py OBB crop/拉正
-modules/reporting.py     輸出 CSV、圖表與結果影片
-```
+See [upstream credits and setup](../README.md) and the [historical validation limits](../docs/monitoring-validation.md).

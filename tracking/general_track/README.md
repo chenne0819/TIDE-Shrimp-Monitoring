@@ -1,245 +1,60 @@
-# General Track
+# General tracking
 
-`general_track` 目前有兩個主要入口：
+This directory has two inference entry points. Both retain the newer project's head/tail OBB geometry and tracking. The shared [monitoring integration](../docs/monitoring-integration.md) adds opt-in first-frame water classification and estimated length, OBB width and weight.
 
-- `run_track`：head/tail OBB 校正蝦子方向，再用 HBB `male_line` 做滑動視窗投票。不使用 CNN。
-- `run_head_tail_track`：head/tail OBB 校正蝦子方向，再用 ResNet/YOLO classification 做 female/male 分類。
+From the monorepo root, run `cd tracking`, activate the tracking environment and supply the required private weights described in the [tracking README](../README.md). Commands below run from `tracking/`; `video/sample.mp4` is your own input, not an included file.
 
-兩個入口共用以下邏輯：
-
-- `best-obb-yolo11m-head_tail.pt` 必須是 OBB 模型。
-- OBB class 必須包含 `shrimp`, `shrimp_head`, `shrimp_tail`。
-- 以 `shrimp` OBB 框為主裁切。
-- 使用 `minAreaRect`、`getPerspectiveTransform`、`warpPerspective` 拉正蝦子。
-- 依 head/tail 偵測結果把頭校正到左邊、尾巴在右邊。
-- 預覽視窗會依螢幕大小等比例縮放。
-- `--debug` 匯出時會把主畫面與右側 debug panel 一起寫進 `result.mp4`。
-
-如果 `model/yolo/best-obb-yolo11m-head_tail.pt` 讀到的是：
-
-```text
-task=classify
-names={0: 'female', 1: 'male'}
-```
-
-代表該檔案不是 head/tail OBB 模型，請換回正確模型。正確應為：
-
-```text
-task=obb
-names={0: 'shrimp', 1: 'shrimp_head', 2: 'shrimp_tail'}
-```
-
-## run_track：OBB crop + HBB male_line + sliding window
-
-這是目前主要的 tracking 入口。
+## OBB tracking, HBB male_line and sliding votes
 
 ```powershell
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --debug
+python -m general_track.run_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 30 --debug
 ```
 
-流程：
+The pipeline uses YOLO `track()` with ByteTrack to detect `shrimp`, `shrimp_head` and `shrimp_tail`. It rectifies the shrimp OBB crop with `minAreaRect`, `getPerspectiveTransform` and `warpPerspective`, aligns the head to the left, then runs HBB `male_line` detection on the full rectified crop. This mode does not use a CNN or an additional sex-region crop.
 
-1. 使用 `best-obb-yolo11m-head_tail.pt` 以 YOLO `track()` + ByteTrack 偵測 `shrimp`, `shrimp_head`, `shrimp_tail`。
-2. 以 `shrimp` OBB 框裁切並校正長寬方向。
-3. 根據 head/tail 把頭校正到左邊。
-4. 把整張校正後的 shrimp crop 送進 `best-hbb-yolo11n.pt` 偵測 `male_line`。
-5. 不使用 CNN，也不再裁切腹部性徵區域。
-6. 對每個 track ID 使用 300 frame 滑動視窗投票。
+Default models:
 
-滑動視窗投票：
+- `model/yolo/best-obb-yolo11m-head_tail.pt`
+- `model/yolo/best-hbb-yolo11n.pt`
 
-- 視窗長度預設 300 frames。
-- 視窗為逐 frame 滑動，例如 `0~299`, `1~300`, `2~301`。
-- 只輸出完整視窗。前 299 幀不產生 window；影片尾端不足 300 幀不另外補算。
-- 投票值為：
+The existing per-ID vote uses a configurable 300-frame sliding horizon. Complete windows follow the pipeline's observation rules; partial windows are not exported as complete windows. For a complete window, `male_rate = male_hits / window_frames`: below 1/3 is female (`F`), from 1/3 to below 2/3 is observation (`obs`), and at least 2/3 is male (`M`). A missing male-line detection retains a recent hit for the existing one-second grace period.
 
-```text
-male_line 出現次數 / 滑動視窗長度
-```
+Common controls include `--window-frames`, `--tracker`, `--obb-conf`, `--obb-iou`, `--hbb-conf`, `--max-frames`, `--gt Male|Female` and `--number-of-shrimps`. Use `--help` for current defaults. Ground-truth labels/counts describe the evaluation input; they are not inferred pond population counts.
 
-- 三種狀態用等分比例判斷：
+Output root: `general_track/exports/run_track/<video_name>/<timestamp>/`.
 
-```text
-male_rate < 1/3        => female，顯示 F
-1/3 <= male_rate < 2/3 => obs
-male_rate >= 2/3       => male，顯示 M
-```
+| File | Contents |
+| --- | --- |
+| `result.mp4` | Annotated video; `--debug` includes the crop/debug panel |
+| `detections.csv` | Per-frame/per-ID male-line detection and voting records |
+| `sliding_windows.csv` | Complete per-ID voting windows |
+| `per_shrimp.csv` | Per-ID final state and vote summary |
+| `video_info.csv` | Test-video metadata, including supplied ground truth/count |
+| `window_vote_summary.csv` | Male/female/observation window totals and final prediction |
 
-- 如果某一幀突然沒偵測到 `male_line`，會等待 1 秒。1 秒內會沿用 male hit，避免短暫漏偵測造成投票跳動。
-
-常用參數：
+## Head/tail tracking and a sex classifier
 
 ```powershell
-python -m general_track.run_track `
-  --video "video\公母蝦仰拍-1.mp4" `
-  --obb-model "model\yolo\best-obb-yolo11m-head_tail.pt" `
-  --hbb-model "model\yolo\best-hbb-yolo11n.pt" `
-  --tracker bytetrack.yaml `
-  --obb-conf 0.5 `
-  --obb-iou 0.3 `
-  --hbb-conf 0.0 `
-  --window-frames 300 `
-  --gt Male `
-  --number-of-shrimps 5 `
-  --debug
+python -m general_track.run_head_tail_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 30 --debug
 ```
 
-指定 GT 與蝦子數量後，會額外輸出 `video_info.csv` 與 `window_vote_summary.csv`：
+This mode rectifies and orients the shrimp crop, then extracts the existing classification region before classifying female/male. It retains per-track majority-vote behavior.
+
+The default is **`model/cnn/best_resnet18-run3.pt`**, selected through `MODEL_SEX_CLASSIFIER_PATH`. Other compatible classifiers can be selected with `--classifier-model`; `--cnn-model` remains a compatibility alias. The upstream loader supports ResNet18/34/50, ResNet50-FPN and YOLO classification checkpoints with the expected format. For example:
 
 ```powershell
-python -m general_track.run_track --video "video\公蝦仰拍-3.mp4" --gt Male --number-of-shrimps 5 --debug
-python -m general_track.run_track --video "video\母蝦仰拍-2.mp4" --gt Female --number-of-shrimps 5 --debug
+python -m general_track.run_head_tail_track --video video/sample.mp4 --classifier-model model/cnn/best_resnet34-run3.pt --monitoring --water-policy report
 ```
 
-只測試前 100 frames：
+The optional `model/yolo/best-cls-yolo11m-run3.pt` was not available for local validation. Supply a valid classification checkpoint before selecting it; do not substitute an OBB or HBB detection checkpoint. Output root is `general_track/exports/head_tail_cls/`, containing `result.mp4`, `detections.csv` and `per_shrimp.csv` within each run.
 
-```powershell
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --debug --max-frames 100
-```
+## Preview, monitoring and model checks
 
-只開預覽不保存：
+- `--preview` displays and saves; `--preview-only` displays without writing output. A GUI-capable OpenCV build and display are required. Without preview, `--debug` still exports the debug panel.
+- Preview scales proportionally to the display. The tracking/measurement coordinates remain those of the source frame.
+- `--monitoring` enables both features; omit it for original behavior, or use `--water-quality`/`--biometrics` separately.
+- Direct Python water policy defaults to `stop`; examples explicitly use `report`. A stopped turbid source does not produce fabricated measurements.
+- Enabled saved-output runs add `monitoring.json`, water records and size/weight fields. Estimates retain the legacy calibration and require new-camera validation; width is an OBB proxy, not anatomical body width.
+- The head/tail checkpoint must be an OBB model with `shrimp`, `shrimp_head` and `shrimp_tail`. A `task=classify` checkpoint with `female`/`male` names is not a substitute.
 
-```powershell
-python -m general_track.run_track --video "video\公母蝦仰拍-1.mp4" --preview-only --debug
-```
-
-注意：`--preview` / `--preview-only` 需要 OpenCV GUI backend。如果環境不能開視窗，請不要使用 preview；只用 `--debug` 仍可匯出含 debug panel 的影片。
-
-輸出位置：
-
-```text
-general_track/exports/run_track/<video_name>/<timestamp>/
-```
-
-輸出檔案：
-
-```text
-result.mp4           主畫面；有 --debug 時包含右側校正蝦子 crop debug panel
-detections.csv       每一幀、每隻蝦的 male_line 偵測與投票結果
-sliding_windows.csv  每個 ID 的完整滑動視窗統計，window_length 預設為 300
-per_shrimp.csv       每個 ID 的最後狀態與投票摘要
-video_info.csv       獨立測試影片資訊
-window_vote_summary.csv 滑動視窗投票結果總表
-```
-
-`video_info.csv` 欄位：
-
-```text
-Video, Ground Truth, Number of Shrimps, Duration, FPS, Total Frames, Valid Windows
-```
-
-`Valid Windows` 計算：
-
-```text
-max(0, Total Frames - window_frames + 1)
-```
-
-`window_vote_summary.csv` 欄位：
-
-```text
-Video, Ground Truth, Total Windows, Male Windows, Female Windows, Observation Windows, Final Prediction
-```
-
-`Final Prediction` 取 `Male Windows`、`Female Windows`、`Observation Windows` 三者最高者。
-
-## run_head_tail_track：OBB crop + classifier
-
-此入口保留給 CNN / YOLO classification 分類 female/male。
-
-```powershell
-python -m general_track.run_head_tail_track --video "video\公母蝦仰拍-1.mp4" --debug
-```
-
-流程：
-
-1. 使用 `best-obb-yolo11m-head_tail.pt` 偵測 `shrimp`, `shrimp_head`, `shrimp_tail`。
-2. 校正 shrimp crop，頭在左、尾在右。
-3. 再裁切分類區域：
-
-```python
-left = total_length // 4
-right = total_length - total_length // 2
-top = horizontal_height // 5
-bottom = horizontal_height - horizontal_height // 5
-```
-
-4. 把該 crop 送進 female/male classifier。
-
-預設 classifier 在 `config.py`：
-
-```python
-MODEL_YOLO_CLS_PATH = "model/yolo/best-cls-yolo11m.pt"
-```
-
-如果要用 ResNet / ResNet-FPN，直接用參數指定：
-
-```powershell
-python -m general_track.run_head_tail_track --video "video\公母蝦仰拍-1.mp4" --classifier-model "model\cnn\best_resnet50-head_tail.pt" --debug
-```
-
-舊參數 `--cnn-model` 仍保留為相容別名：
-
-```powershell
-python -m general_track.run_head_tail_track --video "video\公母蝦仰拍-1.mp4" --cnn-model "model\cnn\best_resnet50_fpn-head_tail.pt" --debug
-```
-
-使用 YOLO classification 模型：
-
-```powershell
-python -m general_track.run_head_tail_track --video "video\公母蝦仰拍-1.mp4" --classifier-model "model\yolo\best-cls-yolo11m.pt" --debug
-```
-
-支援的 classifier：
-
-- YOLO classification
-- ResNet18
-- ResNet34
-- ResNet50
-- ResNet50-FPN
-
-只預覽不保存：
-
-```powershell
-python -m general_track.run_head_tail_track --video "video\公母蝦仰拍-1.mp4" --preview-only --debug
-```
-
-輸出檔案：
-
-```text
-result.mp4      主畫面；有 --debug 時包含右側 crop debug panel
-detections.csv  每一幀分類結果
-per_shrimp.csv  每個 track ID 的多幀 majority vote 結果
-```
-
-## Config
-
-主要設定在：
-
-```text
-general_track/modules/config.py
-```
-
-重要模型路徑：
-
-```python
-MODEL_HEAD_TAIL_OBB_PATH = "model/yolo/best-obb-yolo11m-head_tail.pt"
-MODEL_HBB_PATH = "model/yolo/best-hbb-yolo11n.pt"
-MODEL_YOLO_CLS_PATH = "model/yolo/best-cls-yolo11m.pt"
-MODEL_CNN_PATH = "model/cnn/best_resnet18_gray.pt"
-IMGSZ_OBB = 640
-IMGSZ_HBB = 416
-HBB_CONF = 0.5
-MIN_OBSERVATIONS_PER_SHRIMP = 3
-```
-
-## Local Modules
-
-```text
-run_track.py                     OBB + HBB male_line + sliding window 入口
-run_head_tail_track.py           OBB + classifier 入口
-modules/track_pipeline.py        run_track 的主要流程
-modules/head_tail_pipeline.py    run_head_tail_track 的主要流程
-modules/head_tail_common.py      OBB rows、head/tail 校正、preview/video/CSV 共用工具
-modules/config.py                模型路徑與基礎參數
-modules/obb_track.py             OBB track ID 抽取
-```
+Defaults live in `modules/config.py` and resolve relative to `tracking/project_paths.py`. Explicit relative CLI overrides use the working directory. Active flow files are `modules/track_pipeline.py`, `modules/head_tail_pipeline.py`, and shared `modules/head_tail_common.py`. Upstream credit and historical validation are retained in the [tracking README](../README.md).

@@ -1,5 +1,7 @@
 # Shrimp monitoring integration implementation plan
 
+Historical plan completed on 2026-09-20 in the original integration checkout. Model-copy steps below describe local development; private weights are excluded from this publication. Current setup and required assets are in the [tracking README](../../README.md).
+
 **Goal:** Port ShrimpVisionRT water classification, size calibration and weight regression into the new project's existing inference entry points.
 
 **Architecture:** A shared `shrimp_monitoring` package consumes original-frame shrimp OBB polygons after the new project's detection/tracking. It does not load the old YOLO/segmentation/Norfair stack. First-frame water classification runs before detection, with an optional stop policy. CLI opt-in keeps existing workflows compatible.
@@ -21,7 +23,7 @@
 2. Create `shrimp_monitoring/water.py`, `runtime.py`, `cli.py`, `__init__.py` and water/runtime tests: cached classifier, first-frame gate, safe result export, shared arguments and drawing/summary helpers. Copy original water checkpoint.
 3. Update `general_track/run_track.py`, `run_head_tail_track.py` and their two active pipelines. Add fields to per-detection/per-ID outputs and overlays, while preserving original model calls and voting. Test with controlled detectors and actual regression models.
 4. Update `predict` and `multi_channel_track` CLI/analyzers with the same shared hooks. Keep first-frame water check before auto-total scans and frame skipping. Preserve tracking and temporal input.
-5. Add requirements, a Chinese integration guide with exact commands, model manifest and calibration limitations. Confirm model availability independently from software tests.
+5. Add requirements, a maintained integration guide with exact commands, model manifest and calibration limitations. Confirm model availability independently from software tests.
 6. Run targeted pytest, all four `--help` entry points, compile checks and real-asset parity checks; run a short real-video smoke if the new detector weights are available. Record any missing assets explicitly.
 
 ## Acceptance checks
@@ -35,4 +37,4 @@
 
 ## Completion
 
-All six implementation tasks are complete. Four entry points are integrated, 80 tests pass, and the three entry points with available compatible weights passed real-video smoke checks. The 9-channel model remains unavailable. See `docs/monitoring-validation.md` for scope and evidence. Reference mapping was corrected to uniform aspect-preserving scaling after checking the original `scale_polys` and the new portrait video; source-camera calibration is still required for physical accuracy.
+All six implementation tasks were completed. Four entry points were integrated, the initial suite passed 80 tests, and the three entry points with available compatible weights passed real-video smoke checks. The later complete suite passed 86 tests. The nine-channel model remains unavailable. See the [validation record](../monitoring-validation.md) for scope and evidence. Reference mapping was corrected to uniform aspect-preserving scaling after checking the original `scale_polys` and the new portrait video; source-camera calibration is still required for physical accuracy.
