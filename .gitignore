@@ -70,3 +70,15 @@ playwright-report/
 web/frontend/public/demo/
 # Next.js may generate local coding-agent guidance during development.
 web/frontend/AGENTS.md
+web/frontend/CLAUDE.md
+
+# Local work plans, review reports, generation records and source-image archives.
+tracking/docs/plans/
+tracking/docs/monitoring-validation.md
+web/docs/plans/
+web/docs/validation.md
+web/docs/*review*.md
+web/docs/publication-*.md
+web/docs/ui-refinement-*.md
+web/docs/landing-image-prompts.md
+web/docs/assets/

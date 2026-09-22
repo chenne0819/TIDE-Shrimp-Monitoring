@@ -29,9 +29,9 @@ Runtime files under `web/frontend/public/images/swim/` total **883,224 bytes (ab
 | `shrimp-02.webp` | 1536 × 1024 | Real alpha, pose 2 |
 | `shrimp-03.webp` | 1536 × 1024 | Real alpha, pose 3 |
 
-Original PNGs are under `web/docs/assets/swim/`; the site loads only public WebP files. See [provenance](assets.md) and [prompts](landing-image-prompts.md). URLs use `/images/swim/...`, never drive letters or user directories.
+The site loads the public WebP files; source image archives are not required at runtime. See [asset provenance](assets.md). URLs use `/images/swim/...`.
 
-Before readiness, on failure, or with reduced motion, the hero uses `/images/hero-poster.webp`. The feature section uses `/images/shrimp-observation.webp`; these are additional to the four animation assets. Originals are `web/docs/assets/hero-poster.png` and `shrimp-observation.png`.
+Before readiness, on failure, or with reduced motion, the hero uses `/images/hero-poster.webp`. The feature section uses `/images/shrimp-observation.webp`; these are additional to the four animation assets.
 
 ## Replacing images
 
@@ -72,9 +72,7 @@ Partial pose failure uses available poses. Background failure or loss of all pos
 
 Reduced motion creates no scene controller, loads none of the four layers, removes the extended scroll track and displays the poster with normal content.
 
-## Historical verification and future checks
-
-Historical desktop/mobile review covered scrolling, poster, feature image, skip and dashboard navigation without normal-operation console errors/warnings. Current historical suite counts are consolidated in [validation](validation.md), not repeated here.
+## Checking changes
 
 The scene tests cover independent camera/animal displacement, fixed sizes, coverage, reverse motion, alpha blending, RAF, resize, image failures, remount recovery, visibility pause, teardown, full exit and copy/focus restoration. From `web/frontend/`:
 

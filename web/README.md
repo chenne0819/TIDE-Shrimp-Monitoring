@@ -13,11 +13,11 @@ TIDE-Shrimp-Monitoring/
     agent/skills/       # Project-local analysis and chart-selection instructions
     storage/            # Local videos, outputs, inbox; excluded from Git
     scripts/            # Optional local startup tools
-    docs/               # API contract, asset provenance, historical validation
+    docs/               # API, AI analysis, statistics and visual asset guides
     compose.yaml        # Dedicated PostgreSQL service
 ```
 
-The original standalone application was named `shrimp-observatory`; historical reports retain that name where relevant. Its analyzer is now under `tracking/`. The web worker calls the analyzer without duplicating its model or tracking implementation.
+The web worker calls the analyzer under `tracking/` without duplicating its model or tracking implementation.
 
 ## Using the application
 
@@ -197,9 +197,7 @@ Use `--biometrics-model-dir model/biometrics-new` for direct runs, or append tho
 
 Validate a short run and inspect monitoring JSON fields `reference_size`, `pixels_per_mm` and `weight_mode` in the recording's source/output details. Completed records are not recalculated automatically: upload a new job or submit a new inbox filename. Keep different calibrations separate; repeated analyses create additional records and counts.
 
-## Capture dates and historical test data
-
-The original local development database contained **five workflow-validation jobs**, using real inference on private clips but deliberately assigned pond labels and capture dates from `2026-09-17` to `2026-09-20`. They were not verified capture history or calibrated farm measurements. **That database and its private footage are not included in this repository.**
+## Capture dates
 
 | Entry point | Date source |
 | --- | --- |
@@ -213,11 +211,11 @@ The original local development database contained **five workflow-validation job
 
 The application does not infer capture time from embedded video metadata, filenames or file modification time. `recorded_at` drives daily statistics; `created_at` separately records server creation time. UI/filter dates use Asia/Taipei. Keep test databases separate from farm records and supply the correct capture time.
 
-## Animation, verification and sharing
+## Animation and checks
 
 The landing page uses a layered, scroll-driven Canvas: the camera pans from surface to bed while a shrimp crosses right to left, blending three transparent poses. Scrolling backward reverses it; stopping freezes it. Copy fades early, with skip and reduced-motion support. This is generated-image animation, not footage or inference.
 
-The four runtime WebP layers under `web/frontend/public/images/swim/` total 883,224 bytes. Static fallback/feature images are under `images/`; original generated PNGs are archived under `web/docs/assets/`, outside the public asset directory. See [scene implementation](docs/swimming-scene.md), [readability changes](docs/ui-refinement-2026-09-20.md), [asset provenance](docs/assets.md) and [generation prompts](docs/landing-image-prompts.md).
+The four runtime WebP layers under `web/frontend/public/images/swim/` total 883,224 bytes. Static fallback and feature images are under `images/`. See the [scene implementation](docs/swimming-scene.md) and [asset provenance](docs/assets.md).
 
 From `web/`:
 
@@ -231,14 +229,14 @@ npm.cmd run typecheck
 npm.cmd run build
 ```
 
-The Windows database-helper tests run from `web/` with `pwsh -NoProfile -File scripts/tests/test-local-db.ps1`. They use temporary folders and fake PostgreSQL executables, not a real database; historical checks covered Windows PowerShell 5.1 as well.
+The Windows database-helper tests run from `web/` with `pwsh -NoProfile -File scripts/tests/test-local-db.ps1`. They use temporary folders and fake PostgreSQL executables, not a real database.
 
-[Validation](docs/validation.md) records historical scope and limitations, not a claim that publication repeated those runs. With the API ready, no other worker and an empty queue, this optional smoke test creates a real analysis in a **test database**:
+With the API ready, no other worker and an empty queue, this optional smoke test creates a real analysis in a **test database**:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/smoke-test.py --video path/to/your-sample.mp4 --max-frames 8
 ```
 
-It uploads the supplied video and writes a validation-pond record. No sample video is bundled. See the [security review](docs/security-review-2026-09-20.md) and [AI workspace review](docs/review-cleanup-2026-09-20.md).
+It uploads the supplied video and writes a validation-pond record. No sample video is bundled.
 
 Do not commit `.env`, virtual environments, `.local`, `storage`, private videos/stills or model weights. Ignore rules exclude these; public deployment controls and backup/retention policies still need implementation.

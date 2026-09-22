@@ -2,7 +2,7 @@
 
 This entry point combines YOLO OBB `track()` with a three-frame, nine-channel HBB. It buffers rectified RGB crops per track ID and stacks crops from three time points for temporal `male_line` detection. It also contains the shared [water/size/weight monitoring hooks](../docs/monitoring-integration.md).
 
-**A compatible nine-channel HBB checkpoint is required and was not available for the recorded real-model validation.** Ordinary single-frame, three-channel HBB weights cannot substitute for it. The code integration has automated coverage, but real temporal inference has not been verified. No private weights are included in this publication.
+**A compatible nine-channel HBB checkpoint is required and is not bundled.** Ordinary single-frame, three-channel HBB weights cannot substitute for it. The code integration has automated coverage, but real temporal inference has not been verified. No private weights are included in this publication.
 
 From the monorepo root, `cd tracking`, activate its environment and follow the [model setup](../README.md#private-model-assets-required-after-cloning). After supplying your own video and the compatible checkpoint:
 
@@ -31,4 +31,4 @@ Water checks the first frame only. Direct Python policy defaults to `stop`; exam
 | `modules/preprocessing.py` | OBB crop rectification |
 | `modules/reporting.py` | CSV, figures and result video |
 
-See [upstream credits and setup](../README.md) and the [historical validation limits](../docs/monitoring-validation.md).
+See [upstream credits and setup](../README.md) and [monitoring requirements](../docs/monitoring-integration.md).

@@ -30,4 +30,4 @@ Saved runs are placed under `predict/exports/`, retaining `data/`, `figures/` an
 | `modules/preprocessing.py` | OBB crop rectification |
 | `modules/reporting.py` | CSV, figures and result video |
 
-The original tracking/sex project remains credited in the [tracking README](../README.md). Historical real-weight short-run evidence is in the [validation record](../docs/monitoring-validation.md); private weights are not included in a clone.
+The original tracking/sex project remains credited in the [tracking README](../README.md). Private weights are not included in a clone; follow the documented model layout before running inference.

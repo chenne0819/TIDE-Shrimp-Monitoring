@@ -27,7 +27,7 @@ This repository is a fork of [NxBLANKxN/Shrimp-Male-Yolo-Tracking](https://githu
 
 Water classification and biometric conversion were adapted from [chenne0819/ShrimpVisionRT](https://github.com/chenne0819/ShrimpVisionRT), revision [`dd87698`](https://github.com/chenne0819/ShrimpVisionRT/commit/dd876980b83e42986b54c1ebeb52017c0728f113). Model provenance, hashes and reference geometry are documented in [the asset manifest](tracking/model/assets-manifest.json) and [biometric provenance](tracking/model/biometrics/provenance.json). The manifests are descriptions, not downloadable weights.
 
-The upstream Git history is retained. Publication changes are separated into directory relocation, monitoring integration, the web application, and English documentation. Earlier local work is grouped into these commits; the history does not claim that each previous UI adjustment was committed separately. The [original upstream README](tracking/docs/README-original.md) is preserved verbatim for attribution and historical context.
+The upstream Git history is retained. The [original upstream README](tracking/docs/README-original.md) is preserved for attribution and historical context.
 
 ## Getting started
 
@@ -59,17 +59,17 @@ AI is disabled by default. The `codex` provider uses an existing local Codex log
 - Local model weights are excluded from the new integration commits. Obtain authorized copies separately and follow the documented `tracking/model/` layout. Inherited upstream LFS entries retain their original history; they do not provide the newly integrated private weights.
 - Water results describe image appearance (`clear` / `turbid`) from the first frame. They are not pH, dissolved oxygen or a complete water-quality measurement.
 - Width is an OBB short-edge proxy; length and weight are model estimates. The inherited reference is 800 × 450 at 2.5 pixels/mm. Recalibrate after changing the camera, distance, framing or geometry; resizing alone does not establish a physical scale.
-- General tracking, head/tail tracking and single-frame analysis have prior local smoke-test evidence. The optional temporal multi-channel mode still needs a compatible nine-channel HBB checkpoint.
+- General tracking, head/tail tracking and single-frame analysis are available. The optional temporal multi-channel mode still needs a compatible nine-channel HBB checkpoint.
 - Tracking IDs are local to a video. Comparisons across videos or dates do not establish the growth of the same individual shrimp.
 
-## Privacy and publication
+## Privacy and deployment
 
 The ignore rules exclude local `.env` files, authentication caches, keys, databases, uploaded recordings, private demo footage, model weights, virtual environments and build output. Only configuration templates are included. Keep credentials on the server; never place them in `NEXT_PUBLIC_*` variables.
 
-The current application is intended for a trusted local environment. Public multi-user deployment requires application authentication and appropriate deployment controls; see the [security review](web/docs/security-review-2026-09-20.md). Preserve upstream authorship and any applicable source/dependency notices when redistributing; this repository does not declare a new blanket license for upstream code or external model assets.
+The current application is intended for a trusted local environment. Public multi-user deployment requires application authentication and appropriate deployment controls, including HTTPS, record authorization, upload quotas, storage retention and backups. Preserve upstream authorship and any applicable source/dependency notices when redistributing; this repository does not declare a new blanket license for upstream code or external model assets.
 
-## Validation and contributions
+## Tests and contributions
 
-See the [tracking validation record](tracking/docs/monitoring-validation.md), [web validation record](web/docs/validation.md) and [publication record](web/docs/publication-2026-09-22.md) for commands, scope and limitations. Some tracking tests require the separately supplied monitoring models. Unit tests and short-video smoke tests do not establish model accuracy.
+Test commands are documented in the [tracking setup](tracking/README.md#tests-and-upstream-credits) and [web setup](web/README.md#animation-and-checks). Some tracking tests require the separately supplied monitoring models. Software tests do not establish model accuracy.
 
 For future changes, use focused English commit messages and keep functional changes separate from broad formatting or directory moves. Include the checks that were actually run. Never commit credentials or private recordings when adding a reproducible test case.

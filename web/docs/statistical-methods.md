@@ -54,4 +54,4 @@ Set-Location backend
 ..\.venv\Scripts\python.exe -m pytest tests/test_assistant_statistics.py tests/test_assistant_analytics.py -q
 ```
 
-See [SciPy Pearson documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.pearsonr.html) for formula/assumptions. Numerical tests use independent checks rather than calling the same SciPy function twice. Historical results are in [validation](validation.md); publication itself does not establish a new statistical or model-accuracy validation.
+See [SciPy Pearson documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.pearsonr.html) for formula/assumptions. Numerical tests use independent checks rather than calling the same SciPy function twice. Software checks do not establish model accuracy or camera calibration.

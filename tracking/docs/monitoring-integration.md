@@ -106,10 +106,8 @@ Original detection records gain `length_px`, `width_px`, `length_mm`, `width_mm`
 
 Enabled monitoring writes `monitoring.json` with status, model locations, reference size, scale, weight mode and width provenance. Water-enabled runs also write `water_quality.csv` with label, confidence, policy and action. Predict/temporal monitoring files sit at the run root alongside the existing `data/`, `figures/` and `videos/` directories. A stopped source does not report an unwritten result video. Preview-only writes none of these files.
 
-## Validation scope
+## Tests and limits
 
-The original water checkpoint produced `clear` at about `0.98684` for `2024-01-01-00_11_15.mp4`, and `turbid` at `0.92358` for `2024-01-08-06_53_42.mp4`. The new bottom-view smoke input produced `turbid` at `0.99995`; its tracking runs therefore used `report`. Confidence is not measured accuracy in that new setting.
+Tests cover regression feature order, rounding, rotation/resolution, water preprocessing, tracker/ID preservation, stop/report policies, first-frame handling, exports and cleanup. These checks do not establish physical accuracy or full-video endurance. Temporal inference additionally requires a compatible nine-channel model.
 
-The historical complete suite reached **86 passed** after portability changes. Coverage includes real-regressor parity, feature order, rounding, rotation/resolution, preprocessing, opt-in behavior, tracker/ID preservation, stop/report, first-frame handling, exports, preview-only and cleanup. Three entry points passed real-video short runs; the absent nine-channel model prevented equivalent temporal validation. These checks do not establish physical accuracy, full-video endurance or another operating system's compatibility.
-
-After supplying the original water/regression assets, run `python -m pytest tests -q` from `tracking/`. Publication documentation preparation does not claim a fresh real-model run. See the [dated validation record](monitoring-validation.md) and the [original upstream README archive](README-original.md), which retains the original language and is not the maintained setup guide.
+After supplying the original water/regression assets, run `python -m pytest tests -q` from `tracking/`. The [original upstream README](README-original.md) is preserved for attribution; use the current [tracking README](../README.md) for setup.

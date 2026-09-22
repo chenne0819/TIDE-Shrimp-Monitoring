@@ -99,7 +99,7 @@ From `web/`, this command consumes configured model quota and persists a demo co
 .\.venv\Scripts\python.exe -X utf8 scripts/smoke-assistant.py --demo --question "Compare this month's length, width and weight with last month." --question "Keep those dates and show only width box plots by pond."
 ```
 
-Omit `--demo` to query actual completed videos. The script has deadlines and cancellation handling. See [historical validation](validation.md); this guide does not claim a fresh model run during publication.
+Omit `--demo` to query actual completed videos. The script has deadlines and cancellation handling.
 
 ## References
 

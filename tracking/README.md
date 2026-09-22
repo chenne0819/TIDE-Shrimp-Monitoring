@@ -68,12 +68,12 @@ model/
 
 Only the detector/classifier for your selected mode is required. Water classification requires its checkpoint; biometrics requires all four regressors, even in length-only weight mode.
 
-| Entry point | Default models relative to `tracking/` | Original local validation |
-| --- | --- | --- |
-| `general_track.run_track` | OBB above + `model/yolo/best-hbb-yolo11n.pt` | Real-model short run completed |
-| `general_track.run_head_tail_track` | OBB above + `model/cnn/best_resnet18-run3.pt` | Real-model short run completed |
-| `predict.run_predict` | OBB above + `model/yolo/best-hbb-yolo11l.pt` | Real-model short run completed |
-| `multi_channel_track.run_multi_channel_track` | OBB above + `model/best-hbb-3frame.pt` | Compatible 9-channel HBB unavailable; not tested with real temporal weights |
+| Entry point | Default models relative to `tracking/` |
+| --- | --- |
+| `general_track.run_track` | OBB above + `model/yolo/best-hbb-yolo11n.pt` |
+| `general_track.run_head_tail_track` | OBB above + `model/cnn/best_resnet18-run3.pt` |
+| `predict.run_predict` | OBB above + `model/yolo/best-hbb-yolo11l.pt` |
+| `multi_channel_track.run_multi_channel_track` | OBB above + `model/best-hbb-3frame.pt` |
 
 The optional YOLO sex classifier at `model/yolo/best-cls-yolo11m-run3.pt` was also unavailable. Head/tail tracking defaults to ResNet18 instead. Select alternatives with `--classifier-model` or `--hbb-model`. A normal three-channel HBB cannot replace the temporal mode's three-frame, nine-channel checkpoint. The obsolete `model/best.pt` and root-level `model/best-hbb-yolo11l.pt` are not required.
 
@@ -130,7 +130,7 @@ A turbid source with `stop` records `skipped_turbid`, does not move the input an
 
 Defaults retain the old **800 × 450 reference canvas and 2.5 px/mm**. For source `(W, H)`, `scale = min(800/W, 450/H)` is applied equally to the OBB long/short edges. Each reference edge is divided by pixels-per-mm, then passed to its original regressor. Length-only weight regression uses calibrated length. This does not alter detector input or tracking coordinates.
 
-The short edge is an OBB width proxy; the original project used segmentation width. Overlays show `W~` and weight defaults to length only. The 990 × 1398 portrait-video smoke tests verified execution, not physical accuracy. Camera distance, field of view, lens, refraction and shrimp depth require physical validation and possibly new regressors.
+The short edge is an OBB width proxy; the original project used segmentation width. Overlays show `W~` and weight defaults to length only. Camera distance, field of view, lens, refraction and shrimp depth require physical validation and possibly new regressors.
 
 Measure a known object at the shrimp plane. If the reference size equals source resolution, its scale is 1; otherwise apply the same reference scale before computing pixels-per-mm. **Example only:** if a 20 mm object measures 100 pixels in a 990 × 1398 reference canvas, use:
 
@@ -142,9 +142,7 @@ These numbers are not a supplied calibration. Check against measured shrimp leng
 
 `--biometrics-model-dir` selects a replacement directory containing the same four filenames. Models must support `joblib.load`, `.predict()` and the expected feature count: one for length, width and length-only weight; `[length_mm, width_mm]` for two-feature weight. `--water-model` requires the original `Linear(784, 2)` state dictionary. Different architectures require loader changes. Only load serialized models from trusted sources.
 
-## Validation and upstream credits
-
-The latest recorded complete local run on **2026-09-20** passed **86 tests**. General tracking, ResNet head/tail tracking and predict each completed an eight-frame real-weight run, including output decoding and finite positive estimates. Those real-video runs are historical Windows execution checks, not accuracy validation. The publication copy also passed all 86 tests on 2026-09-22 with the original private water/regression assets supplied locally and excluded from Git; the real-video runs were not repeated for publication. The temporal model remains unverified with real weights.
+## Tests and upstream credits
 
 After supplying the original water checkpoint and four regressors, run from `tracking/`:
 
@@ -152,6 +150,6 @@ After supplying the original water checkpoint and four regressors, run from `tra
 python -m pytest tests -q
 ```
 
-The full suite includes real-asset checks; a code-only clone cannot reproduce all of them without those files. See the [integration guide](docs/monitoring-integration.md) and [historical validation record](docs/monitoring-validation.md).
+The full suite includes real-asset checks; a code-only clone cannot reproduce all of them without those files. See the [integration guide](docs/monitoring-integration.md) for model contracts and outputs.
 
 Tracking/sex inference is based on Shrimp-Male-Yolo-Tracking revision `5662c81ba1ad86b04cbc0bfe6206df1599dbc36a`. Water/regression compatibility is based on ShrimpVisionRT revision `dd876980b83e42986b54c1ebeb52017c0728f113`. The body of the [original upstream README archive](docs/README-original.md) is preserved verbatim in its original language, beneath an English archive note. Its old commands and paths are historical reference; this README and current CLI help are the maintained setup instructions.
