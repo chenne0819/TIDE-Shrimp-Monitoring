@@ -14,13 +14,30 @@ MODEL_DIR = Path(__file__).resolve().parents[1] / "model" / "biometrics"
 POLYGON = np.array([[100, 100], [400, 100], [400, 150], [100, 150]], dtype=float)
 
 
-@pytest.fixture(scope="module")
-def estimator():
-    return BiometricsEstimator(MODEL_DIR)
+@pytest.fixture
+def unit_model_dir(tmp_path):
+    from sklearn.linear_model import LinearRegression
+    data = {
+        "length": ([[0.], [100.]], [1., 101.]),
+        "width": ([[0.], [10.]], [-1., 9.]),
+        "weight_length": ([[0.], [200.]], [-1., 19.]),
+        "weight_length_width": ([[100., 10.], [120., 12.], [150., 20.]], [10., 12., 15.]),
+    }
+    for name, (features, targets) in data.items():
+        model = LinearRegression().fit(features, targets)
+        joblib.dump(model, tmp_path / MODEL_FILES[name][0])
+    return tmp_path
+
+
+@pytest.fixture
+def estimator(unit_model_dir):
+    return BiometricsEstimator(unit_model_dir)
 
 
 @pytest.mark.parametrize("weight_mode", ["length", "length-width"])
 def test_predictions_match_original_feature_order_scale_and_rounding(weight_mode):
+    if not all((MODEL_DIR / name).is_file() for name, _ in MODEL_FILES.values()):
+        pytest.skip("Original private regression weights are missing; real-model parity is unverified.")
     estimator = BiometricsEstimator(MODEL_DIR, weight_mode=weight_mode)
     result = estimator.measure(POLYGON, (450, 800, 3))
     length = round(float(joblib.load(MODEL_DIR / MODEL_FILES["length"][0]).predict([[300 / 25 * 10]])[0]), 1)
@@ -69,10 +86,10 @@ def test_rotated_obb_uses_edge_length_and_not_axis_aligned_bounds(estimator):
         assert actual[field] == expected[field]
 
 
-def test_custom_calibration_applied_before_regression():
-    estimator = BiometricsEstimator(MODEL_DIR, pixels_per_mm=5.0)
+def test_custom_calibration_applied_before_regression(unit_model_dir):
+    estimator = BiometricsEstimator(unit_model_dir, pixels_per_mm=5.0)
     result = estimator.measure(POLYGON * 2, (450, 800))
-    baseline = BiometricsEstimator(MODEL_DIR).measure(POLYGON, (450, 800))
+    baseline = BiometricsEstimator(unit_model_dir).measure(POLYGON, (450, 800))
     assert [result[k] for k in ("length_mm", "width_mm", "weight_g")] == [baseline[k] for k in ("length_mm", "width_mm", "weight_g")]
 
 
@@ -112,10 +129,10 @@ def test_unavailable_width_does_not_discard_length_only_prediction(estimator):
     assert result["weight_g"] == baseline["weight_g"]
 
 
-def test_dual_feature_mode_does_not_silently_substitute_missing_width():
+def test_dual_feature_mode_does_not_silently_substitute_missing_width(unit_model_dir):
     narrow = POLYGON.copy()
     narrow[2:, 1] = 101
-    result = BiometricsEstimator(MODEL_DIR, weight_mode="length-width").measure(narrow, (450, 800))
+    result = BiometricsEstimator(unit_model_dir, weight_mode="length-width").measure(narrow, (450, 800))
     assert result["length_mm"] > 0
     assert result["width_mm"] is None
     assert result["weight_g"] is None
@@ -167,12 +184,14 @@ def test_missing_model_is_an_explicit_startup_error(tmp_path):
         BiometricsEstimator(tmp_path)
 
 
-def test_wrong_feature_model_is_an_explicit_startup_error(tmp_path):
+def test_wrong_feature_model_is_an_explicit_startup_error(tmp_path, unit_model_dir):
+    target = tmp_path / "invalid"
+    target.mkdir()
     for filename, _ in MODEL_FILES.values():
-        shutil.copyfile(MODEL_DIR / filename, tmp_path / filename)
-    shutil.copyfile(MODEL_DIR / MODEL_FILES["weight_length_width"][0], tmp_path / MODEL_FILES["length"][0])
+        shutil.copyfile(unit_model_dir / filename, target / filename)
+    shutil.copyfile(unit_model_dir / MODEL_FILES["weight_length_width"][0], target / MODEL_FILES["length"][0])
     with pytest.raises(ValueError, match="must accept 1 input feature"):
-        BiometricsEstimator(tmp_path)
+        BiometricsEstimator(target)
 
 
 def test_summary_uses_only_valid_observations(estimator):

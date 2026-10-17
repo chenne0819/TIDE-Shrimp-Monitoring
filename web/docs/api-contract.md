@@ -4,7 +4,7 @@ The monorepo keeps the integrated analyzer in `tracking/` and this application i
 
 ## Job
 
-`id: string (UUID), filename: string, pond: string, recorded_at: string, created_at: string, status: queued|processing|completed|stopped|failed, progress: number (0..100), mode: general|head_tail|predict, water_label: clear|turbid|null, water_confidence: number|null, shrimp_count: number, avg_length_mm: number|null, avg_width_mm: number|null, avg_weight_g: number|null, source_video_url: string|null, result_video_url: string|null, thumbnail_url: string|null, error: string|null, processed_frames: number`.
+`id: string (UUID), filename: string, pond: string, recorded_at: string, created_at: string, status: queued|processing|completed|stopped|failed, progress: number (0..100), mode: general|head_tail, water_label: clear|turbid|null, water_confidence: number|null, shrimp_count: number, avg_length_mm: number|null, avg_width_mm: number|null, avg_weight_g: number|null, source_video_url: string|null, result_video_url: string|null, thumbnail_url: string|null, error: string|null, processed_frames: number`.
 
 API media URLs are /api/... relative to the API origin, not web origin. Completed summaries count unique tracked individuals per recording, not a deduplicated pond population across videos. Measurements are estimates under original camera calibration, and width is OBB proxy.
 
@@ -29,7 +29,7 @@ Browser video/image elements and download navigation may send `Sec-Fetch-Site: c
 
 ## Worker and storage
 
-PostgreSQL durable queue; worker process claims queued job and executes existing Python CLI without shell. Local paths resolve from `web/`: `ANALYZER_ROOT=../tracking`; `ANALYZER_PYTHON` can override the interpreter, otherwise it selects `tracking/.venv` when present. `STORAGE_ROOT=./storage`. Keep uploads/output out of Git. Separate worker CLI supports --once for deterministic testing. Inbox accepts finished videos only after an explicit `.ready` marker, prevents duplicate ingestion, and supports same-stem JSON metadata. Capture worker heartbeat and recover stale jobs conservatively (don't reclaim a live long job). Export browser-ready H.264 MP4 and thumbnail using ffmpeg. API does not execute inference in the HTTP request.
+PostgreSQL provides the durable queue; a separate worker claims jobs and invokes the analyzer without a shell. **Current integration limitation:** the worker still sends removed flags, while `general_track.run_track` accepts only `--config` and `--help`. Real video inference requires migration to a job-specific TOML invocation. Local paths resolve from `web/`: `ANALYZER_ROOT=../tracking`, `ANALYZER_PYTHON=../.venv/Scripts/python.exe` on Windows (`../.venv/bin/python` on Linux), and `STORAGE_ROOT=./storage`. Set the interpreter explicitly; the removed `tracking/.venv` is no longer the tracking environment. Keep uploads/output out of Git. The separate worker CLI still supports `--once`. Inbox accepts completed videos through `.ready` markers and same-stem JSON metadata. Heartbeats, conservative stale-job recovery and FFmpeg export remain worker responsibilities. API requests do not execute inference directly.
 
 Scope: local/internal trusted deployment. No login yet; bind local services to localhost and document authentication/reverse proxy required before public hosting.
 

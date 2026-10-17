@@ -24,7 +24,7 @@ def test_upload_queued_and_persistent(client, settings):
     assert (settings.storage_root / "jobs" / result["id"] / "original.mp4").read_bytes() == b"video payload"
 
 
-@pytest.mark.parametrize("fields", [{"pond": " "}, {"mode": "bad"}, {"water_policy": "bad"}, {"max_frames": "0"},
+@pytest.mark.parametrize("fields", [{"pond": " "}, {"mode": "bad"}, {"mode": "predict"}, {"mode": "multi_channel"}, {"water_policy": "bad"}, {"max_frames": "0"},
                                     {"recorded_at": "2026-09-20T12:00:00"}, {"recorded_at": "bad"}])
 def test_upload_validation(client, fields):
     assert upload(client, **fields).status_code == 422

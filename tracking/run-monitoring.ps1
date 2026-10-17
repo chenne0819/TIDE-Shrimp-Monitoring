@@ -1,22 +1,18 @@
 param(
-    [string]$Video = "video\公母蝦仰拍-1.mp4",
-    [int]$MaxFrames = 0,
-    [switch]$Preview,
-    [ValidateSet("report", "stop")]
-    [string]$WaterPolicy = "report"
+    [string]$Config = (Join-Path $PSScriptRoot "general_track/config.toml")
 )
 $ErrorActionPreference = "Stop"
-$taskPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$taskRoot = Split-Path -Parent $PSScriptRoot
+$taskPython = Join-Path $taskRoot ".venv/Scripts/python.exe"
 if (-not (Test-Path -LiteralPath $taskPython)) {
-    throw "Run setup-monitoring.ps1 first to create the local Python environment."
+    throw "Create the repository-root Python 3.14 .venv with tracking/setup-monitoring.ps1 before running tracking."
 }
-$taskArgs = @("-m", "general_track.run_track", "--video", $Video,
-    "--monitoring", "--water-policy", $WaterPolicy)
-if ($MaxFrames -gt 0) { $taskArgs += @("--max-frames", "$MaxFrames") }
-if ($Preview) { $taskArgs += "--preview" }
+& $taskPython -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 14) else 'Tracking requires Python 3.14 in the repository-root .venv.')"
+if ($LASTEXITCODE -ne 0) { throw "The repository-root tracking environment must use Python 3.14." }
+$taskConfig = (Resolve-Path -LiteralPath $Config).Path
 Push-Location -LiteralPath $PSScriptRoot
 try {
-    & $taskPython @taskArgs
+    & $taskPython -m general_track.run_track --config $taskConfig
     if ($LASTEXITCODE -ne 0) { throw "Tracking failed (exit code $LASTEXITCODE)." }
 } finally {
     Pop-Location

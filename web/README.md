@@ -6,7 +6,8 @@ This monorepo keeps the application and analyzer separate:
 
 ```text
 TIDE-Shrimp-Monitoring/
-  tracking/             # Python analyzer, bundled monitoring models, separate .venv
+  .venv/                # Python 3.14 tracking environment; excluded from Git
+  tracking/             # Python analyzer and included monitoring models
   web/                  # This application
     frontend/           # Next.js, TypeScript, Motion, Recharts
     backend/            # FastAPI, SQLAlchemy, worker
@@ -17,7 +18,7 @@ TIDE-Shrimp-Monitoring/
     compose.yaml        # Dedicated PostgreSQL service
 ```
 
-The web worker calls the analyzer under `tracking/` without duplicating its model or tracking implementation. It enables `--monitoring`, which loads the four bundled regression models from `tracking/model/biometrics/` and the water checkpoint from `tracking/model/water/`. The selected mode's additional detector and sex-classification weights must still be supplied as described in the [tracking setup](../tracking/README.md).
+The web architecture delegates inference to the analyzer under `tracking/`. The current worker still passes legacy flags, including `--monitoring`, while the analyzer accepts only `--config` and `--help`. Real web video analysis therefore requires a worker-to-TOML migration; supplying the models or selecting the Python executable alone does not fix this mismatch. Standalone tracking supports the included four regressors and water checkpoint; OBB/CNN weights must be supplied separately as described in the [tracking setup](../tracking/README.md).
 
 ## Using the application
 
@@ -75,7 +76,7 @@ See [AI analysis](docs/ai-analysis.md) for model configuration, chart templates 
 
 ## First-time setup
 
-Requirements: Node.js 22+, Python 3.12, PostgreSQL installed locally or through Docker, and a working `tracking/` installation. Inference requires its model files and separate Python environment; the website does not download or train weights.
+Requirements: Node.js 22+, a Python environment for the backend, PostgreSQL installed locally or through Docker, and a working `tracking/` installation. Tracking requires Python 3.14 in the repository-root `.venv`; the backend keeps its separate `web/.venv`. The website does not download or train weights. Follow the worker migration limitation above before expecting real web inference to complete.
 
 Run from **`web/`**:
 
@@ -114,7 +115,7 @@ The helper verifies startup, connectivity and database creation before atomicall
 
 ### Analyzer location
 
-Set **`ANALYZER_ROOT=../tracking`** in `web/.env`. All relative application settings resolve from `web/`, independent of the process working directory. Leaving `ANALYZER_PYTHON` empty selects `tracking/.venv` when present; an explicit interpreter path is also supported.
+Set **`ANALYZER_ROOT=../tracking`** and **`ANALYZER_PYTHON=../.venv/Scripts/python.exe`** in `web/.env` on Windows (`../.venv/bin/python` on Linux). All relative application settings resolve from `web/`, independent of the process working directory. The old `tracking/.venv` was removed. The current backend's empty-interpreter fallback does not search the repository-root environment, so configure it explicitly. This selects the interpreter but does not migrate the worker CLI.
 
 Backend and analyzer environments remain separate. The API does not need to import PyTorch; the worker invokes the analyzer's Python.
 
@@ -160,7 +161,7 @@ Recording lists refresh for jobs submitted through the inbox or other windows. A
 
 ## Meaning of the results
 
-- Modes: general tracking, head/tail tracking and sampled prediction. The nine-channel mode is not exposed because its weights were not supplied.
+- Modes: head/tail OBB tracking with a CNN/sex classifier (`general`). The previous `head_tail` mode remains supported for stored jobs and API clients.
 - Water classification describes only the first frame as clear/turbid. `report` records it and continues; `stop` stops on turbidity.
 - Length and weight use inherited regression models; width estimates OBB width. New cameras are not calibrated automatically.
 - Counts are per-video tracked IDs, not a pond-wide deduplicated population.
@@ -169,7 +170,7 @@ Recording lists refresh for jobs submitted through the inbox or other windows. A
 
 ## Changing videos, cameras or regression models
 
-**The default remains the old reference size `800 × 450`, `2.5 px/mm` and inherited regression models. New-camera accuracy has not been validated.** The implementation is in `tracking/shrimp_monitoring/biometrics.py`, with CLI defaults in `tracking/shrimp_monitoring/cli.py`. The web worker does not override these defaults and has no calibration form or scale environment variable.
+**The default remains the old reference size `800 × 450`, `2.5 px/mm` and inherited regression models. New-camera accuracy has not been validated.** The implementation is in `tracking/shrimp_monitoring/biometrics.py`; active execution settings are in `tracking/general_track/config.toml`. The web worker currently requires a TOML invocation migration and has no calibration form or scale environment variable.
 
 ```text
 s = min(reference_width / original_width, reference_height / original_height)
@@ -188,27 +189,36 @@ A different camera, lens, distance, crop or animal depth requires calibration. P
 
 ### 2. Direct analyzer invocation
 
-Run from **`tracking/`**, replacing the video and illustrative scale:
+Run from **`tracking/`**. Copy the configuration so its relative model paths keep the same base directory:
 
 ```powershell
-.\.venv\Scripts\python.exe -m general_track.run_track --video video/new-video.mp4 --output-root general_track/exports/new-calibration --monitoring --water-policy report --measurement-reference-size 990 1398 --pixels-per-mm 5.0 --weight-mode length
+Copy-Item general_track/config.toml general_track/calibration.toml
 ```
 
-`general_track.run_head_tail_track` and `predict.run_predict` accept the same calibration parameters. CLI overrides affect only that run, not future web jobs.
+Edit the corresponding existing keys in `general_track/calibration.toml` (these are illustrative scale values, not supplied calibration):
+
+```toml
+video = "../video/new-video.mp4"
+output_root = "exports/new-calibration"
+biometrics = true
+measurement_reference_size = [990, 1398]
+pixels_per_mm = 5.0
+weight_mode = "length"
+preview_only = false
+max_frames = 8
+```
+
+Then run:
+
+```powershell
+..\.venv\Scripts\python.exe -m general_track.run_track --config general_track/calibration.toml
+```
+
+The entry accepts only `--config` and `--help`. Editing this standalone config does not configure future web jobs.
 
 ### 3. Web or inbox jobs
 
-In [backend/app/worker.py](backend/app/worker.py), find `command = [...]` in `QueueWorker.process()` and add parameters before `if max_frames:`. This example is **not applied** by default:
-
-```python
-command += [
-    "--measurement-reference-size", "990", "1398",
-    "--pixels-per-mm", "5.0",
-    "--weight-mode", "length",
-]
-```
-
-Use measured values, wait for active work to finish, then restart the worker. Subsequent claims, including already-queued jobs, use the new settings; no frontend rebuild is required. These are shared worker settings, not per-camera/job calibration. Multiple capture configurations require an additional per-job calibration feature.
+The invocation in [backend/app/worker.py](backend/app/worker.py) still needs migration to create/use a job-specific TOML and pass `--config`. Do not append removed calibration flags to that command. The migration must preserve job input/output paths, frame limits, monitoring settings and water policy. Multiple camera calibrations additionally require an explicit per-job configuration design. Restarting the existing worker alone does not resolve the CLI mismatch.
 
 ### 4. Replacement regression weights
 
@@ -223,9 +233,9 @@ Place new files under `tracking/model/biometrics-new/`, retaining these names an
 
 Files must load with `joblib.load`, expose `.predict()`, and have the expected `n_features_in_` (1 for the first three, 2 for the last). A different format requires loader changes, not an extension rename.
 
-Use `--biometrics-model-dir model/biometrics-new` for direct runs, or append those two strings to the worker command. Analyzer-relative paths resolve from `tracking/`. Water-model replacement uses `--water-model model/water/replacement.pth` and requires a compatible classifier architecture.
+For a TOML kept under `tracking/general_track/`, set `biometrics_model_dir = "../model/biometrics-new"`. Water-model replacement uses `water_model = "../model/water/replacement.pth"`. Paths resolve from the TOML directory; model formats must remain compatible. These settings need separate handling in the future web worker migration.
 
-Validate a short run and inspect monitoring JSON fields `reference_size`, `pixels_per_mm` and `weight_mode` in the recording's source/output details. Completed records are not recalculated automatically: upload a new job or submit a new inbox filename. Keep different calibrations separate; repeated analyses create additional records and counts.
+Validate a short standalone run and inspect `monitoring.json` fields `reference_size`, `pixels_per_mm` and `weight_mode`. Completed database records are not recalculated automatically. After the worker migration, new web/inbox jobs must explicitly use the intended calibration; keep different capture conditions separate to avoid invalid comparisons.
 
 ## Capture dates
 

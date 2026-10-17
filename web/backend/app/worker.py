@@ -19,7 +19,7 @@ from .results import read_results
 from .storage import VIDEO_EXTENSIONS, clean_filename, parse_recorded_at, safe_path
 
 LOG = logging.getLogger("tide.worker")
-MODULES = {"general": "general_track.run_track", "head_tail": "general_track.run_head_tail_track", "predict": "predict.run_predict"}
+MODULES = {"general": "general_track.run_track", "head_tail": "general_track.run_track"}
 
 
 class LostLease(RuntimeError):

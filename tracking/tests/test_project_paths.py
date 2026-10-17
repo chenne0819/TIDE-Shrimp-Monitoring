@@ -1,7 +1,7 @@
 """A relocated checkout must load its own assets, not the original machine's."""
 
 from argparse import ArgumentParser
-import importlib
+import tomllib
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,14 +13,13 @@ from project_paths import PROJECT_ROOT
 from shrimp_monitoring.cli import add_monitoring_arguments
 
 
-@pytest.mark.parametrize("mode", ["general_track", "predict", "multi_channel_track"])
-def test_default_models_stay_in_checkout_when_working_directory_changes(mode, tmp_path, monkeypatch):
+def test_default_models_stay_in_checkout_when_working_directory_changes(tmp_path, monkeypatch):
+    from general_track.run_track import DEFAULT_CONFIG
     monkeypatch.chdir(tmp_path)
-    config = importlib.import_module(f"{mode}.modules.config")
-    defaults = {name: value for name, value in vars(config).items() if name.startswith("MODEL_")}
-    assert defaults
-    for value in defaults.values():
-        assert Path(value).is_relative_to(PROJECT_ROOT / "model")
+    with DEFAULT_CONFIG.open("rb") as file:
+        settings = tomllib.load(file)
+    for name in ("obb_model", "classifier_model", "water_model", "biometrics_model_dir"):
+        assert (DEFAULT_CONFIG.parent / settings[name]).resolve().is_relative_to(PROJECT_ROOT / "model")
 
 
 def test_explicit_monitoring_paths_preserve_user_choice():
@@ -32,11 +31,15 @@ def test_explicit_monitoring_paths_preserve_user_choice():
 
 
 def test_renamed_checkout_uses_its_copied_code_and_real_monitoring_assets(tmp_path):
+    required = [PROJECT_ROOT / "model/water/logistic_regression_model.pth",
+                *[PROJECT_ROOT / "model/biometrics" / name for name in ("final_linear_model_length.pkl", "final_linear_model_width.pkl", "polynomial_regression_model_degree3.pkl", "multi_feature_model.pkl")]]
+    if not all(path.is_file() for path in required):
+        pytest.skip("Private water/regression models are not installed; relocation integration is unverified.")
     checkout = tmp_path / "shared checkout 資料"
     checkout.mkdir()
     shutil.copy2(PROJECT_ROOT / "project_paths.py", checkout)
     shutil.copytree(PROJECT_ROOT / "shrimp_monitoring", checkout / "shrimp_monitoring", ignore=shutil.ignore_patterns("__pycache__"))
-    for mode in ("general_track", "predict", "multi_channel_track"):
+    for mode in ("general_track",):
         # The upstream package initializers import their analyzers; copy the
         # complete code tree so this also exercises real package imports.
         shutil.copytree(PROJECT_ROOT / mode, checkout / mode,
@@ -50,18 +53,19 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from pathlib import Path
 from argparse import ArgumentParser
-import importlib
+import tomllib
 import numpy as np
 import project_paths
 from shrimp_monitoring.cli import add_monitoring_arguments, monitoring_from_args
 expected = Path(sys.argv[1]).resolve()
 assert project_paths.PROJECT_ROOT == expected
-for name in ('general_track', 'predict', 'multi_channel_track'):
-    config = importlib.import_module(name + '.modules.config')
-    assert Path(config.__file__).is_relative_to(expected)
-    for key, value in vars(config).items():
-        if key.startswith('MODEL_'):
-            assert Path(value).is_relative_to(expected / 'model')
+import tomllib
+from general_track.run_track import DEFAULT_CONFIG
+assert DEFAULT_CONFIG.is_relative_to(expected)
+with DEFAULT_CONFIG.open("rb") as file:
+    settings = tomllib.load(file)
+for key in ('obb_model', 'classifier_model', 'water_model', 'biometrics_model_dir'):
+    assert (DEFAULT_CONFIG.parent / settings[key]).resolve().is_relative_to(expected / 'model')
 parser = ArgumentParser()
 add_monitoring_arguments(parser)
 session = monitoring_from_args(parser.parse_args(['--monitoring', '--water-policy', 'report']))

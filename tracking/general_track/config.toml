@@ -1,0 +1,78 @@
+# 相對影片、模型與輸出路徑，以這份 TOML 所在資料夾為基準。
+
+# 必填：影片路徑；使用相機時改成整數，例如 video = 0。
+video = "../video/公母蝦仰拍-3.mp4"
+
+# 偵測蝦身、頭與尾的 OBB 權重，需包含對應類別。
+obb_model = "../model/yolo/best-obb-yolo11m-head_tail.pt"
+
+# 公母分類權重；此範例使用 ResNet50。
+classifier_model = "../model/cnn/best_resnet50-run3.pt"
+
+# 追蹤器設定；bytetrack.yaml 是 Ultralytics 內建名稱。
+# 若使用自訂檔案，其路徑以 TOML 所在資料夾為準。
+tracker = "bytetrack.yaml"
+
+# OBB 推論的目標影像尺寸；不是實際攝影尺寸或量測校正尺寸。
+imgsz = 640
+
+# OBB 偵測信心門檻，範圍 0～1；提高會排除更多低信心偵測。
+conf = 0.3
+
+# OBB 非極大值抑制（NMS）的 IoU 門檻，範圍 0～1；不是追蹤配對門檻。
+iou = 0.3
+
+# 選填：male 機率大於或等於此值判為 male，否則為 female。
+# 範圍 0～1，作用於每幀分類、個體投票之前；省略沿用模型判斷。
+# 取消下一行的註解即可使用；TOML 不使用 null。
+cnn_threshold = 0.03
+
+# 選填：從影片開頭最多處理的幀數，必須是正整數。
+# 省略時處理完整影片；不會修改或截短原始影片。
+# max_frames = 30
+
+# 是否啟用第一幀水色分類；需要 water_model 權重。
+water_quality = false
+
+# 是否啟用長度、寬度代理值與重量估算；需要四個回歸權重。
+# 與 water_quality 同時設為 true 即啟用完整監測。
+biometrics = true
+
+# 水色模型路徑；water_quality = false 時不載入。
+water_model = "../model/water/logistic_regression_model.pth"
+
+# 回歸模型資料夾，需包含長度、寬度及兩種重量估算的四個 .pkl。
+# biometrics = false 時不載入。
+biometrics_model_dir = "../model/biometrics"
+
+# 水色判為 turbid 時的處理：stop 停止推論；report 記錄並繼續。
+# 只有啟用水色分類時會影響流程。
+water_policy = "stop"
+
+# 校正參考畫面中每毫米的像素數，必須大於 0；需依攝影條件校正。
+pixels_per_mm = 2.5
+
+# 尺寸換算的參考畫面 [寬, 高]，兩者須為正整數。
+# 原圖 OBB 邊長先等比例映射到此參考尺寸；不改變偵測座標。
+measurement_reference_size = [800, 450]
+
+# 重量估算方式：length 使用校正長度；length-width 加入寬度代理值。
+# 寬度是 OBB 短邊代理值，使用 length-width 前需驗證其適用性。
+weight_mode = "length"
+
+# 結果根目錄；程式在其下建立影片名稱與執行時間子目錄。
+output_root = "exports/run_track"
+
+# 顯示即時預覽，並維持結果儲存；需要 GUI OpenCV 與可用顯示環境。
+preview = false
+
+# 只預覽：不寫影片、CSV、裁切圖或監測結果；true 時會啟用預覽。
+# 此模式優先於 preview 與 save_crops 的儲存行為。
+preview_only = true
+
+# 啟動時顯示分類裁切 debug 面板；儲存的結果影片也包含面板。
+# 預覽可按 D 切換面板；此按鍵不改變已設定的影片輸出樣式。
+debug = true
+
+# 保存實際送入公母分類器的裁切圖；preview_only = true 時不保存。
+save_crops = false

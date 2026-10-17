@@ -8,7 +8,7 @@ export type Job = {
   created_at: string;
   status: JobStatus;
   progress: number;
-  mode: "general" | "head_tail" | "predict";
+  mode: "general" | "head_tail";
   water_label: "clear" | "turbid" | null;
   water_confidence: number | null;
   shrimp_count: number;

@@ -57,11 +57,11 @@ def test_worker_failure_is_persisted(settings, monkeypatch):
     worker.close()
 
 
-@pytest.mark.parametrize("predict", [False, True])
-def test_import_actual_export_schemas_and_nulls(tmp_path, predict):
+@pytest.mark.parametrize("legacy_summary", [False, True])
+def test_import_current_and_historical_export_schemas_and_nulls(tmp_path, legacy_summary):
     (tmp_path / "monitoring.json").write_text(json.dumps({"status": "completed", "water_model": "C:/private/model.pth"}))
     (tmp_path / "water_quality.csv").write_text("water_label,water_confidence\nturbid,0.95\n")
-    if predict:
+    if legacy_summary:
         name = "per_shrimp_summary.csv"
         header = "Shrimp_ID,Final_Label,Total_Seen,mean_length_mm,mean_width_mm,mean_weight_g\n"
     else:

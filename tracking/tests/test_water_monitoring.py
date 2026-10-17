@@ -29,6 +29,8 @@ def test_preprocessing_exactly_matches_original_torchvision():
 
 
 def test_real_checkpoint_logits_confidence_and_class_order():
+    if not WATER_MODEL.is_file():
+        pytest.skip("Private water checkpoint is missing; real-model inference is unverified.")
     classifier = WaterClassifier(WATER_MODEL)
     state = torch.load(WATER_MODEL, map_location="cpu", weights_only=True)
     frame = np.random.default_rng(10).integers(0, 256, (450, 800, 3), dtype=np.uint8)
@@ -93,7 +95,15 @@ def test_cli_default_paths_do_not_depend_on_cwd(tmp_path, monkeypatch):
     add_monitoring_arguments(parser)
     monkeypatch.chdir(tmp_path)
     assert not monitoring_from_args(parser.parse_args([])).enabled
-    session = monitoring_from_args(parser.parse_args(["--monitoring"]))
+    args = parser.parse_args(["--monitoring"])
+    assert Path(args.water_model) == WATER_MODEL
+    assert Path(args.biometrics_model_dir) == ROOT / "model/biometrics"
+    required = [WATER_MODEL, *[ROOT / "model/biometrics" / filename for filename in ("final_linear_model_length.pkl", "final_linear_model_width.pkl", "polynomial_regression_model_degree3.pkl", "multi_feature_model.pkl")]]
+    if not all(path.is_file() for path in required):
+        with pytest.raises(FileNotFoundError):
+            monitoring_from_args(args)
+        return
+    session = monitoring_from_args(args)
     assert session.enabled and session.estimator is not None and session.water_classifier is not None
     assert session.estimator.weight_mode == "length"
     assert session.water_policy == "stop"

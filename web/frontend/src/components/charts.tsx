@@ -231,17 +231,16 @@ export function DistributionChart({
 }
 export function SexChart({ data }: { data: Overview["sex"] }) {
   const segments = [
-    { name: "母蝦", value: data.female, color: "#256454" },
-    { name: "公蝦", value: data.male, color: "#7aa282" },
-    { name: "未判定", value: data.unknown, color: "#b5bcb8" },
+    { name: "female", value: data.female, color: "#16a34a" },
+    { name: "male", value: data.male, color: "#2563eb" },
   ];
-  const total = data.male + data.female + data.unknown;
+  const total = data.male + data.female;
   return (
     <section className="chart-panel sex-panel">
       <div className="panel-heading">
         <div>
           <h2>性別組成</h2>
-          <p>已分析影片的追蹤個體</p>
+          <p>已判定公母的追蹤個體</p>
         </div>
       </div>
       <div className="donut-wrap">
@@ -268,7 +267,7 @@ export function SexChart({ data }: { data: Overview["sex"] }) {
         </ResponsiveContainer>
         <div className="donut-center">
           <strong>{formatNumber(total, 0)}</strong>
-          <span>追蹤個體</span>
+          <span>已判定個體</span>
         </div>
       </div>
       <div className="chart-legend">

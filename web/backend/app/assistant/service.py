@@ -185,16 +185,17 @@ class AssistantService:
         """Keep this run's capacity until its read-only thread actually finishes.
 
         Cancelling asyncio.to_thread only cancels the waiter, not the SQL/Python
-        operation. Shield and drain it even if another HTTP cancel or shutdown
+        operation. Wait and drain it even if another HTTP cancel or shutdown
         cancellation arrives, so a client cannot accumulate uncounted workers.
         """
         worker = asyncio.create_task(asyncio.to_thread(function, *args))
         try:
-            return await asyncio.shield(worker)
+            await asyncio.wait({worker})
+            return worker.result()
         except asyncio.CancelledError:
             while not worker.done():
                 try:
-                    await asyncio.shield(worker)
+                    await asyncio.wait({worker})
                 except asyncio.CancelledError:
                     continue
                 except Exception:

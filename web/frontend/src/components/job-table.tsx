@@ -51,11 +51,7 @@ export function JobTable({
                   <div>
                     <strong>{job.filename}</strong>
                     <span>
-                      {job.mode === "head_tail"
-                        ? "頭尾追蹤"
-                        : job.mode === "predict"
-                          ? "單幀分析"
-                          : "個體追蹤"}
+                      頭尾追蹤
                     </span>
                   </div>
                 </Link>

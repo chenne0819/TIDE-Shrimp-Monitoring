@@ -8,14 +8,14 @@ The integration runs in Python, not in the PowerShell launchers. The web applica
 
 | Feature | Behavior | Enable with |
 | --- | --- | --- |
-| Water appearance | Classify the first frame of each source as `clear` or `turbid`, with confidence | `--water-quality` |
-| Turbid-water policy | `stop` ends the source before shrimp inference; `report` records and continues | `--water-policy stop` or `report` |
-| Estimated length | Original-frame OBB long edge, reference scaling, then the original length regressor; output in mm | `--biometrics` |
-| Estimated width | OBB short edge and width regressor; explicitly a bounding-box proxy, shown as `W~` | `--biometrics` |
-| Estimated weight | Calibrated length by default, or calibrated length plus width proxy; output in g | `--weight-mode length` or `length-width` |
+| Water appearance | Classify the first frame of each source as `clear` or `turbid`, with confidence | `water_quality = true` |
+| Turbid-water policy | `stop` ends the source before shrimp inference; `report` records and continues | `water_policy = "stop"` or `"report"` |
+| Estimated length | Original-frame OBB long edge, reference scaling, then the original length regressor; output in mm | `biometrics = true` |
+| Estimated width | OBB short edge and width regressor; explicitly a bounding-box proxy, shown as `W~` | `biometrics = true` |
+| Estimated weight | Calibrated length by default, or calibrated length plus width proxy; output in g | `weight_mode = "length"` or `"length-width"` |
 | Overlays and exports | Append measurements to existing records and per-ID summaries; save monitoring settings | Automatic with enabled monitoring and saved output |
 
-`--monitoring` enables both water classification and biometrics. Without `--monitoring`, `--water-quality` or `--biometrics`, the additions remain disabled. A model-path argument alone does not enable a feature. The newer detector, tracker, IDs and sex-voting logic remain in charge; the old YOLO, segmentation and Norfair inference stack is not loaded.
+Set `water_quality = true` and `biometrics = true` in TOML to enable both features. The supplied config currently enables `biometrics` and disables `water_quality`; their five monitoring weights are included. Model paths alone do not enable a feature. The detector, tracker, IDs and final sex voting remain in charge. `preview_only = true` shows the annotated preview without saving files; use `preview_only = false` to export results.
 
 Water appearance is not pH or dissolved oxygen and is not checked continuously throughout the video. Length, width and weight require physical validation and calibration for a new camera; current defaults do not establish measurement accuracy.
 
@@ -24,18 +24,27 @@ Water appearance is not pH or dissolved oxygen and is not checked continuously t
 ```powershell
 git clone https://github.com/chenne0819/TIDE-Shrimp-Monitoring.git
 cd TIDE-Shrimp-Monitoring/tracking
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.14 -m venv ../.venv
+..\.venv\Scripts\Activate.ps1
 python -m ensurepip --upgrade
 python -m pip install -r requirements-dev.txt
-# Albumentations also installs headless OpenCV; restore the GUI build for preview.
-python -m pip uninstall -y opencv-python-headless
+python -m pip uninstall -y albumentations albucore opencv-python-headless
 python -m pip install --force-reinstall --no-deps 'opencv-python>=4.10,<5'
 ```
 
-If PowerShell activation is blocked, use `.\.venv\Scripts\python.exe` instead of `python`. The optional Windows `setup-monitoring.ps1` performs equivalent setup. On macOS/Linux, after installing Python 3.12, use `python3.12 -m venv .venv` and `source .venv/bin/activate`, then the same pip commands. Recorded inference validation used Windows with CPU PyTorch; macOS/Linux inference and CUDA configurations have not been validated here. Preview requires a desktop display and an OpenCV GUI backend.
+Tracking uses the repository-root `.venv` with Python 3.14; reuse it if it already exists. Do not create a separate `tracking/.venv`. If PowerShell activation is blocked, use `..\.venv\Scripts\python.exe` instead of `python` from `tracking/`. The optional Windows `setup-monitoring.ps1` performs equivalent setup and checks the interpreter version before installing packages. On Linux, use `python3.14 -m venv ../.venv` and `source ../.venv/bin/activate`, then the same pip commands. The maintained setup targets Windows/Linux with NVIDIA CUDA; other platforms require separate dependency configuration. Preview requires a desktop display and an OpenCV GUI backend.
 
-`requirements.txt` contains runtime dependencies; `requirements-dev.txt` adds pytest. `scikit-learn==1.6.1` matches the original serialized regressors. These are dependency constraints, not a complete environment lock. Install a suitable CUDA PyTorch build separately if needed. Recreate virtual environments on another computer instead of copying them.
+`requirements.txt` contains runtime dependencies and pins the matching NVIDIA CUDA 12.6 builds `torch==2.10.0+cu126` and `torchvision==0.25.0+cu126` from the official PyTorch index, plus `scikit-learn==1.9.1`. `requirements-dev.txt` adds pytest. Use Python 3.14 on Windows/Linux and a compatible NVIDIA driver. The four regressors and water checkpoint are now included. The regressors were originally saved with scikit-learn 1.6.1; keep that historical version in provenance rather than treating it as the current dependency. Cross-version estimator loading can emit compatibility warnings, and functional checks do not establish camera-specific measurement accuracy. The other dependency ranges are not a complete environment lock. Recreate virtual environments on another computer instead of copying them.
+
+Verify actual GPU execution after installation:
+
+```powershell
+..\.venv\Scripts\python.exe check-gpu.py
+```
+
+The check runs a CUDA matrix calculation and torchvision CUDA NMS without loading private model weights. The Windows setup helper runs this check and fails if CUDA is unavailable. YOLO automatically selects CUDA when available, and the CNN sex classifier does likewise; image decoding, OpenCV processing and the scikit-learn regressors still run on CPU. GPU wheels alone do not validate model accuracy or make every pipeline operation a GPU operation.
+
+CUDA 12.6 is the wheel runtime, not the maximum CUDA version printed by `nvidia-smi`. A newer driver may report CUDA 13.0 while running these CUDA 12.6 wheels. This setup does not target macOS or AMD GPUs.
 
 ## Included monitoring models and additional detector assets
 
@@ -48,15 +57,11 @@ Use this layout under `tracking/model/`; `water/` and the four files in `biometr
 ```text
 model/
   yolo/
-    best-obb-yolo11m-head_tail.pt       # Shrimp/head/tail OBB, shared by all modes
-    best-hbb-yolo11n.pt                # Default general-tracking HBB
-    best-hbb-yolo11l.pt                # Default single-frame predict HBB
-    best-hbb-yolo11s.pt                # Optional single-frame alternative
-    best-hbb-yolo11m.pt                # Optional single-frame alternative
+    best-obb-yolo11m-head_tail.pt       # Required shrimp/head/tail OBB for the single tracking entry
   cnn/
-    best_resnet18-run3.pt              # Default head/tail sex classifier
+    best_resnet18-run3.pt              # Optional alternative
     best_resnet34-run3.pt              # Optional alternative
-    best_resnet50-run3.pt              # Optional alternative
+    best_resnet50-run3.pt              # Default head/tail sex classifier
   water/
     logistic_regression_model.pth      # Included water classifier
   biometrics/
@@ -68,57 +73,39 @@ model/
   assets-manifest.json                 # Included origins, filenames and hashes
 ```
 
-Only the additional detector/classifier files for your selected mode are required. Water classification uses the bundled checkpoint; biometrics loads all four bundled regressors, even in length-only weight mode. `--monitoring` enables both, and the web worker supplies this option automatically.
+Supply the required OBB checkpoint and one compatible sex-classification checkpoint. Water classification uses the included checkpoint; biometrics loads all four included regressors, even in length-only weight mode. Enable these features with the TOML `water_quality` and `biometrics` booleans. The entry does not accept `--monitoring`. The web worker still uses that removed option and requires a separate migration.
 
 | Entry point | Default models relative to `tracking/` |
 | --- | --- |
-| `general_track.run_track` | OBB above + `model/yolo/best-hbb-yolo11n.pt` |
-| `general_track.run_head_tail_track` | OBB above + `model/cnn/best_resnet18-run3.pt` |
-| `predict.run_predict` | OBB above + `model/yolo/best-hbb-yolo11l.pt` |
-| `multi_channel_track.run_multi_channel_track` | OBB above + `model/best-hbb-3frame.pt` |
+| `general_track.run_track` | OBB above + `model/cnn/best_resnet50-run3.pt` |
 
-The optional YOLO sex classifier at `model/yolo/best-cls-yolo11m-run3.pt` was also unavailable. Head/tail tracking defaults to ResNet18 instead. Select alternatives with `--classifier-model` or `--hbb-model`. A normal three-channel HBB cannot replace the temporal mode's three-frame, nine-channel checkpoint. The obsolete `model/best.pt` and root-level `model/best-hbb-yolo11l.pt` are not required.
+Head/tail tracking defaults to ResNet50. Select compatible alternatives with the TOML `classifier_model` field; no HBB detection model is used.
 
-Default model locations resolve relative to `project_paths.py`, so they follow the `tracking/` directory when it moves. Explicit relative model, video and output paths use the working directory. Logs may display resolved absolute paths; defaults are not tied to a user account or drive.
+The execution settings are in `general_track/config.toml`. Relative input, model and output paths resolve against that TOML file, independently of the working directory. Absolute paths are also supported.
 
 The newer detection/classification bundle was user-provided. The bundled water and regression weights were recovered unchanged from the user's original local ShrimpVisionRT `shrimp_OBB/Model` directory; no random replacement weights were used. The [asset manifest](model/assets-manifest.json) and [regression provenance](model/biometrics/provenance.json) record origins, hashes and model details without personal source paths. The manifest also describes detector/classifier assets that must be obtained separately.
 
 ## Run inference
 
-Activate the tracking environment and remain in `tracking/`. Replace `video/sample.mp4` with your own video; that example file is not bundled. A camera index such as `--video 0` is accepted. Some inherited upstream videos use Git LFS; `git lfs install` and `git lfs pull` retrieve available LFS objects, or supply your own input.
+Use the repository-root inference environment and remain in `tracking/`. Edit [general_track/config.toml](general_track/config.toml): provide your own input video and OBB/CNN weights, set their paths, optionally uncomment `max_frames` for a short test, and configure the monitoring booleans. Private input recordings are not bundled; the sample video path must be adjusted on a fresh clone.
 
 ```powershell
-# General OBB + HBB + ByteTrack, limited to a short smoke test.
-python -m general_track.run_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 30 --preview
-
-# Head/tail tracking with the default ResNet18 classifier.
-python -m general_track.run_head_tail_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 30
-
-# Single-frame detection with existing ID assignment, not YOLO tracking.
-python -m predict.run_predict --video video/sample.mp4 --monitoring --water-policy report --skip-frames 10
-
-# Only after obtaining the compatible nine-channel HBB checkpoint.
-python -m multi_channel_track.run_multi_channel_track --video video/sample.mp4 --monitoring --water-policy report
+..\.venv\Scripts\python.exe -m general_track.run_track
+..\.venv\Scripts\python.exe -m general_track.run_track --config general_track/config.toml
 ```
 
-Remove `--max-frames` for a full source. The temporal entry point does **not** expose `--max-frames` or `--skip-frames`. `--preview` displays and saves output; `--preview-only` displays without writing video, CSV or monitoring files. Omit preview on a machine without a GUI.
+The entry accepts only `--config` and `--help`; old inference flags are removed. Use an integer `video = 0` for a camera. Omit max_frames to process the full source. Preview and crops are TOML booleans. The optional Windows wrapper accepts `-Config` and does not automatically enable monitoring.
 
-Examples use `report` because the original water model classified the new bottom-view smoke video as turbid. The direct Python CLI defaults to `stop`. Confidence is not evidence of accuracy in that new setting.
+The existing web worker needs a subsequent invocation migration from the removed flags to TOML. Result file schemas remain compatible. See the [module guide](general_track/README.md) for behavior and module responsibilities. The old `Train/` directory is not part of this working tree; tests that still reference it are legacy-test issues, not supported training entry points.
 
-The optional Windows wrapper `.\run-monitoring.ps1 -Video video/sample.mp4 -MaxFrames 30 -Preview` runs the general Python entry point with monitoring and `report`; always supply your own `-Video` after cloning. In PyCharm, choose the tracking `.venv` interpreter, working directory `tracking/`, and module name `general_track.run_track`. Use each entry point's `--help` for current options.
-
-Module guides: [general tracking](general_track/README.md), [predict](predict/README.md), [temporal tracking](multi_channel_track/README.md), and [OBB dataset extraction](obb_dataset_stats/README.md). The inherited `run-all.py` is an outdated batch example with incompatible general-tracking arguments and old model paths; use the commands above. `Train/` retains upstream training code, requiring separate datasets and per-script configuration. This integration did not retrain the models or comprehensively refactor training.
 
 ## Outputs
 
 | Mode | Default output root relative to `tracking/` |
 | --- | --- |
-| General tracking | `general_track/exports/run_track/` |
-| Head/tail classification | `general_track/exports/head_tail_cls/` |
-| Single-frame predict | `predict/exports/` |
-| Temporal tracking | `multi_channel_track/exports/<step_frames>FPS/` |
+| Head/tail tracking and classification | `general_track/exports/run_track/` |
 
-Runs create video/timestamp subdirectories. General tracking preserves `result.mp4`, `detections.csv`, `per_shrimp.csv` and voting reports. Predict/temporal modes retain `data/`, `figures/` and `videos/`. Monitoring adds:
+Runs create video/timestamp subdirectories. Tracking produces `result.mp4`, `detections.csv` and `per_shrimp.csv`, retaining the head/tail classifier and majority votes. `save_crops = true` saves classifier inputs. Monitoring adds:
 
 - `length_px`, `width_px`: OBB edges mapped to the reference canvas, not source pixels.
 - `length_mm`, `width_mm`, `weight_g`, `width_source=obb_proxy`, `weight_method`, `measurement_status`: estimates and interpretation; invalid values remain empty.
@@ -136,22 +123,35 @@ The short edge is an OBB width proxy; the original project used segmentation wid
 
 Measure a known object at the shrimp plane. If the reference size equals source resolution, its scale is 1; otherwise apply the same reference scale before computing pixels-per-mm. **Example only:** if a 20 mm object measures 100 pixels in a 990 × 1398 reference canvas, use:
 
-```powershell
-python -m general_track.run_track --video video/sample.mp4 --monitoring --water-policy report --measurement-reference-size 990 1398 --pixels-per-mm 5.0 --weight-mode length
+Update these TOML fields:
+
+```toml
+measurement_reference_size = [990, 1398]
+pixels_per_mm = 5.0
+weight_mode = "length"
 ```
 
-These numbers are not a supplied calibration. Check against measured shrimp length, width and mass; retrain/replace regressors when needed. Keep differently calibrated recordings separate. Website worker calibration is configured in the web project; one-off CLI overrides do not change future website jobs.
+These numbers are not a supplied calibration. Check against measured shrimp length, width and mass; retrain/replace regressors when needed. Keep differently calibrated recordings separate. Calibration belongs to each tracking TOML file. Web job-specific calibration must be addressed when its worker is migrated; editing a standalone config does not implement that migration.
 
-`--biometrics-model-dir` selects a replacement directory containing the same four filenames. Models must support `joblib.load`, `.predict()` and the expected feature count: one for length, width and length-only weight; `[length_mm, width_mm]` for two-feature weight. `--water-model` requires the original `Linear(784, 2)` state dictionary. Different architectures require loader changes. Only load serialized models from trusted sources.
+`biometrics_model_dir` selects a replacement directory containing the same four filenames. Models must support `joblib.load`, `.predict()` and the expected feature count: one for length, width and length-only weight; `[length_mm, width_mm]` for two-feature weight. `water_model` requires the original `Linear(784, 2)` state dictionary. Different architectures require loader changes. Only load serialized models from trusted sources.
 
 ## Tests and upstream credits
+
+For the six sex-labeled local videos, see [offline EMA threshold evaluation](docs/ema-evaluation.md).
+The evaluator collects probabilities once and compares replay thresholds without changing the live settings.
+The [tuning summary](docs/ema-threshold-results.md) is versioned; raw recordings and local evaluation outputs are not.
 
 After installing the tracking dependencies, run from `tracking/`:
 
 ```powershell
-python -m pytest tests -q
+..\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-The monitoring tests include real-asset checks against the bundled water checkpoint and four regressors. See the [integration guide](docs/monitoring-integration.md) for model contracts and outputs.
+Unit tests use temporary fixtures. Real-asset checks also exercise the included water checkpoint and four regressors; they explicitly skip if those assets are removed. The full suite still includes legacy training-path checks and configuration fixtures tied to editable sample settings; any failures must be reported rather than described as a green suite. See the [integration guide](docs/monitoring-integration.md) for model contracts and outputs. Software checks do not validate physical measurement accuracy.
+
+The [2026-10-17 verification snapshot](docs/validation-20261017.md) records actual
+results: the focused monitoring/pipeline suites pass, while the full suite still
+has twenty legacy-path/fixture failures. It also records cross-version warnings
+and the short real-video monitoring check.
 
 Tracking/sex inference is based on Shrimp-Male-Yolo-Tracking revision `5662c81ba1ad86b04cbc0bfe6206df1599dbc36a`. Water/regression compatibility is based on ShrimpVisionRT revision `dd876980b83e42986b54c1ebeb52017c0728f113`. The body of the [original upstream README archive](docs/README-original.md) is preserved verbatim in its original language, beneath an English archive note. Its old commands and paths are historical reference; this README and current CLI help are the maintained setup instructions.

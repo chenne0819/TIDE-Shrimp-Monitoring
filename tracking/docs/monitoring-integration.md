@@ -4,55 +4,33 @@ This integration adds [ShrimpVisionRT](https://github.com/chenne0819/ShrimpVisio
 
 ## Setup and entry points
 
-Follow the [tracking README](../README.md) to create the Python 3.12 environment and obtain private weights. From the monorepo root, run `cd tracking` and activate this directory's environment before these commands. `video/sample.mp4` is your own input, not a bundled sample.
+Follow the [tracking README](../README.md) for the environment and private assets. `general_track.run_track` now reads [config.toml](../general_track/config.toml); it accepts only --config and --help.
 
 ```powershell
-# General OBB tracking and single-frame HBB male_line detection.
-python -m general_track.run_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 12
-
-# Head/tail tracking and the default ResNet18 sex classifier.
-python -m general_track.run_head_tail_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 8
-
-# Single-frame OBB/HBB prediction with the default OBB and HBB-L models.
-python -m predict.run_predict --video video/sample.mp4 --monitoring --water-policy report --max-frames 12
+cd tracking
+..\.venv\Scripts\python.exe -m general_track.run_track --config general_track/config.toml
 ```
 
-`multi_channel_track.run_multi_channel_track` also contains monitoring hooks, but requires a compatible three-frame, nine-channel HBB checkpoint at `model/best-hbb-3frame.pt` or an explicit `--hbb-model` path. That checkpoint was unavailable for recorded validation. Three-channel HBB weights cannot replace it. This entry point exposes neither `--max-frames` nor `--skip-frames`.
+Set water_quality and biometrics independently in TOML. Both true enables both features; disabled features do not require their private weights. Set max_frames for a short test. Preview, crop saving, calibration and water policy are configured in the same file. All its parameters have explanatory comments. Relative paths use the TOML directory.
 
-Head/tail classification defaults to `model/cnn/best_resnet18-run3.pt`. An optional YOLO classifier can be selected with `--classifier-model`; its checkpoint is not supplied. The [mode/model table](../README.md#private-model-assets-required-after-cloning) lists the maintained paths.
-
-`--preview` displays and saves; `--preview-only` does not write any output. Preview requires a GUI-capable OpenCV environment and display. The Windows wrapper `run-monitoring.ps1` is an optional shortcut for the general Python entry point, enabling monitoring and `report`:
-
-```powershell
-.\run-monitoring.ps1 -Video video/sample.mp4 -MaxFrames 30 -Preview
-.\run-monitoring.ps1 -Video video/sample.mp4 -WaterPolicy stop
-```
-
-`setup-monitoring.ps1` optionally creates the environment and handles the Albumentations/headless-OpenCV conflict. Recreate `.venv` after moving to another computer; do not copy an old environment.
-
-## Shared options
-
-| Option | Meaning and default |
+| TOML setting | Meaning |
 | --- | --- |
-| `--monitoring` | Enable water classification and biometrics together |
-| `--water-quality` | Enable first-frame water classification only |
-| `--biometrics` | Enable length, width proxy and weight estimation only |
-| `--water-policy stop` | Python CLI default: stop a turbid source before shrimp inference |
-| `--water-policy report` | Record water appearance and continue even when turbid |
-| `--water-model PATH` | Default: `model/water/logistic_regression_model.pth` |
-| `--biometrics-model-dir DIR` | Default: `model/biometrics`; all four fixed regression filenames are required |
-| `--pixels-per-mm 2.5` | Pixels per mm in the calibration reference canvas |
-| `--measurement-reference-size 800 450` | Reference width and height, without changing detector input |
-| `--weight-mode length` | Default: estimate weight from calibrated length |
-| `--weight-mode length-width` | Use calibrated length and OBB width proxy; validate this definition first |
+| `water_quality` | First-frame clear/turbid classification |
+| `biometrics` | Length, OBB width proxy and weight estimation |
+| `water_policy` | stop before inference when turbid, or report and continue |
+| `water_model` | Original Linear(784, 2) checkpoint |
+| `biometrics_model_dir` | Directory containing all four fixed regressors |
+| `pixels_per_mm` | Pixels per mm in the reference canvas |
+| `measurement_reference_size` | Reference [width, height], without changing detector coordinates |
+| `weight_mode` | length, or length-width after validating the width proxy |
 
-Default assets resolve against `project_paths.py` in `tracking/`. Explicit relative asset, video and output arguments use the working directory; absolute overrides are supported. Logs may show resolved absolute paths, but source defaults contain no personal computer path.
+The PowerShell wrapper accepts only -Config; it runs the same settings and does not override monitoring. The shared shrimp_monitoring APIs retain their original behavior. The web worker still uses the removed flags and must be migrated separately; its existing result reader can read the same exported schema.
 
 ## First-frame water classification
 
 The original classifier is `Linear(784, 2)` with class order `turbid`, `clear`. Preprocessing converts to 28 × 28 grayscale, scales pixels to `[0, 1]`, normalizes with mean/std `0.5`, and flattens to 784 values. Compatibility includes the original ndarray behavior: OpenCV BGR bytes are interpreted as RGB before grayscale conversion. Changing that interpretation changes the supplied model's outputs.
 
-Each source is checked once on its first available frame, before auto-total prescanning, frame skipping or shrimp inference. `stop` records `skipped_turbid`; `report` records the result and continues. The original video is not moved. This is visual clarity classification in one frame, not chemical water analysis or continuous monitoring.
+Each source is checked once on its first available frame, before shrimp inference. `stop` records `skipped_turbid`; `report` records the result and continues. The original video is not moved. This is visual clarity classification in one frame, not chemical water analysis or continuous monitoring.
 
 ## Geometry, regression and calibration
 
@@ -69,11 +47,11 @@ weight_g  = length_weight_regressor(length_mm)  # default
 
 Both axes use one uniform scale, preserving edge measurements under rotation. Reference-canvas padding does not affect edge lengths. For another aspect ratio, this is a reference-canvas adaptation, not proof of identical legacy geometry or physical calibration. Detector input and tracking coordinates remain unchanged. The original one-decimal rounding and feature order are retained.
 
-Defaults retain the old `800 × 450` and `2.5 px/mm`. The local smoke input was a `990 × 1398` portrait video. Running at that resolution does not establish correct millimeters: camera distance, field of view, lens, refraction and shrimp depth require validation. Derive `--measurement-reference-size` and `--pixels-per-mm` using a known object at the shrimp plane, then check regression outputs against measured shrimp. See the [calibration example](../README.md#calibration-and-replacement-models).
+Defaults retain the old `800 × 450` and `2.5 px/mm`. The local smoke input was a `990 × 1398` portrait video. Running at that resolution does not establish correct millimeters: camera distance, field of view, lens, refraction and shrimp depth require validation. Derive `measurement_reference_size` and `pixels_per_mm` using a known object at the shrimp plane, then check regression outputs against measured shrimp. See the [calibration example](../README.md#calibration-and-replacement-models).
 
 Width is the **new OBB short-edge proxy**, unlike the old segmentation-derived width. Exports use `width_source=obb_proxy`; overlays show `W~`. Default weight uses length alone rather than silently introducing an unvalidated width into the two-feature regressor. Explicit `length-width` uses `[length_mm, width_mm]` and does not fall back when width is unavailable.
 
-Invalid/nonpositive results remain empty with a status instead of becoming zero-valued observations. A valid length may still yield length-only weight when width is unavailable. Measurements attach only to records retained by each original pipeline, including head/tail validity filtering; the integration does not add sex-voting samples.
+Invalid/nonpositive results remain empty with a status instead of becoming zero-valued observations. A valid length may still yield length-only weight when width is unavailable. Measurements attach to retained tracking records. The retained head/tail classifier pipeline keeps its crop direction correction, validity filtering and sex-voting behavior.
 
 ## Model contracts and provenance
 
@@ -86,9 +64,9 @@ The user-provided newer bundle contained one head/tail OBB, four single-frame HB
 | `polynomial_regression_model_degree3.pkl` | Calibrated length in mm | Weight in g |
 | `multi_feature_model.pkl` | `[length_mm, width_mm]` | Weight in g |
 
-All four files load even in length-only mode. They must support `joblib.load`, `.predict()` and compatible `n_features_in_`. Their saved scikit-learn version was `1.6.1`. Water weights must expose `linear.weight` and `linear.bias` for the original `Linear(784, 2)` state dictionary. Different architectures require loader changes. Missing/incompatible files cause explicit errors. Only load serialized models from trusted sources.
+All four files load even in length-only mode. They must support `joblib.load`, `.predict()` and compatible `n_features_in_`. Their saved scikit-learn version was `1.6.1`; the current runtime uses Python 3.14 and scikit-learn `1.9.1`. The four regressors and water checkpoint are included as ordinary Git files with recorded SHA-256 hashes. Run the real-asset tests after environment changes; successful loading/prediction does not establish camera-specific accuracy or universal cross-version compatibility. Water weights must expose `linear.weight` and `linear.bias` for the original `Linear(784, 2)` state dictionary. Different architectures require loader changes. Missing/incompatible files cause explicit errors. Only load serialized models from trusted sources.
 
-The [asset manifest](../model/assets-manifest.json) records bundle names/hashes; [regression provenance](../model/biometrics/provenance.json) records source revision, hashes, estimator types, coefficients and calibration evidence. The four regression models and water checkpoint are included as ordinary Git files. The newer detector/classifier weights must still be obtained separately. Some inherited videos use Git LFS, but LFS pull does not retrieve that omitted detector/classifier bundle.
+The [asset manifest](../model/assets-manifest.json) records historical bundle names/hashes and the current entry's required assets; [regression provenance](../model/biometrics/provenance.json) records source revision, hashes, estimator types, coefficients and calibration evidence. The five monitoring weights are included. OBB/CNN weights and input videos must be supplied separately. Some inherited assets use Git LFS, but LFS pull does not retrieve the unpublished OBB/CNN bundle. Historical HBB entries in the manifest are not requirements of the current entry.
 
 ## Integration files and outputs
 
@@ -97,17 +75,16 @@ The [asset manifest](../model/assets-manifest.json) records bundle names/hashes;
 | `shrimp_monitoring/water.py` | Original preprocessing, checkpoint validation and classification |
 | `shrimp_monitoring/biometrics.py` | OBB geometry, scaling, regression and valid-value summaries |
 | `shrimp_monitoring/runtime.py` | First-frame policy, overlays, output fields and metadata |
-| `shrimp_monitoring/cli.py` | Shared opt-in options and defaults |
+| `shrimp_monitoring/cli.py` | Legacy CLI helper; not used by the TOML entry |
 | `project_paths.py` | Portable default asset resolution |
-| `general_track/modules/track_pipeline.py`, `head_tail_pipeline.py` | Hooks for both tracking entry points |
-| `predict/modules/analyzer.py`, `multi_channel_track/modules/analyzer.py` | Hooks for prediction and temporal tracking |
+| `general_track/modules/head_tail_pipeline.py` | Monitoring hooks for the retained `run_track` entry |
 
 Original detection records gain `length_px`, `width_px`, `length_mm`, `width_mm`, `weight_g`, `width_source`, `weight_method`, `measurement_status` and enabled water fields. Pixels are reference-scaled, not raw source pixels. Per-ID summaries gain `measurement_samples` and valid-value means; the sample count counts valid length observations, not shrimp.
 
-Enabled monitoring writes `monitoring.json` with status, model locations, reference size, scale, weight mode and width provenance. Water-enabled runs also write `water_quality.csv` with label, confidence, policy and action. Predict/temporal monitoring files sit at the run root alongside the existing `data/`, `figures/` and `videos/` directories. A stopped source does not report an unwritten result video. Preview-only writes none of these files.
+Enabled monitoring writes `monitoring.json` with status, model locations, reference size, scale, weight mode and width provenance. Water-enabled runs also write `water_quality.csv` with label, confidence, policy and action. A stopped source does not report an unwritten result video. Preview-only writes none of these files.
 
 ## Tests and limits
 
-Tests cover regression feature order, rounding, rotation/resolution, water preprocessing, tracker/ID preservation, stop/report policies, first-frame handling, exports and cleanup. These checks do not establish physical accuracy or full-video endurance. Temporal inference additionally requires a compatible nine-channel model.
+Tests cover regression feature order, rounding, rotation/resolution, water preprocessing, tracker/ID preservation, stop/report policies, first-frame handling, exports and cleanup. These checks do not establish physical accuracy or full-video endurance.
 
-After installing the tracking dependencies, run `python -m pytest tests -q` from `tracking/`; the original water/regression assets are bundled. The [original upstream README](README-original.md) is preserved for attribution; use the current [tracking README](../README.md) for setup.
+After installing the tracking dependencies, run `..\.venv\Scripts\python.exe -m pytest tests -q` from `tracking/`; the original water/regression assets are included. The [original upstream README](README-original.md) is preserved for attribution; use the current [tracking README](../README.md) for setup and known test limitations.

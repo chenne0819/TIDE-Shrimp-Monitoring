@@ -1,8 +1,0 @@
-train: ./shrimp_HBB_dataset_3/train/images
-val: ./shrimp_HBB_dataset_3/val/images
-test: ./shrimp_HBB_dataset_3/test/images
-
-nc: 2
-names: 
-  0: shrimp_head
-  1: shrimp_tail

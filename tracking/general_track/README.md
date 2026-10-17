@@ -1,60 +1,73 @@
 # General tracking
 
-This directory has two inference entry points. Both retain the newer project's head/tail OBB geometry and tracking. The shared [monitoring integration](../docs/monitoring-integration.md) adds opt-in first-frame water classification and estimated length, OBB width and weight.
+`general_track.run_track` tracks head/tail OBB detections with ByteTrack, corrects crop direction, and classifies female/male. Execution settings live in [config.toml](config.toml); every parameter has a Chinese explanation.
 
-From the monorepo root, run `cd tracking`, activate the tracking environment and supply the required private weights described in the [tracking README](../README.md). Commands below run from `tracking/`; `video/sample.mp4` is your own input, not an included file.
+## Run
 
-## OBB tracking, HBB male_line and sliding votes
+From `tracking/`, using the repository-root Python 3.14 environment:
 
 ```powershell
-python -m general_track.run_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 30 --debug
+..\.venv\Scripts\python.exe -m general_track.run_track
+..\.venv\Scripts\python.exe -m general_track.run_track --config general_track/config.toml
+..\.venv\Scripts\python.exe -m general_track.run_track --help
 ```
 
-The pipeline uses YOLO `track()` with ByteTrack to detect `shrimp`, `shrimp_head` and `shrimp_tail`. It rectifies the shrimp OBB crop with `minAreaRect`, `getPerspectiveTransform` and `warpPerspective`, aligns the head to the left, then runs HBB `male_line` detection on the full rectified crop. This mode does not use a CNN or an additional sex-region crop.
+From the repository root with its existing virtual environment:
 
-Default models:
+```powershell
+$env:PYTHONPATH = "tracking"
+.\.venv\Scripts\python.exe -m general_track.run_track --config tracking/general_track/config.toml
+```
 
-- `model/yolo/best-obb-yolo11m-head_tail.pt`
-- `model/yolo/best-hbb-yolo11n.pt`
+The only command options are `--config` and `--help`. Previous options such as `--video`, `--cnn-threshold`, `--monitoring`, `--max-frames` and preview flags have been removed. Edit the corresponding TOML fields instead. The PowerShell wrapper accepts only `-Config` and requires Python 3.14 in the repository-root `.venv`.
 
-The existing per-ID vote uses a configurable 300-frame sliding horizon. Complete windows follow the pipeline's observation rules; partial windows are not exported as complete windows. For a complete window, `male_rate = male_hits / window_frames`: below 1/3 is female (`F`), from 1/3 to below 2/3 is observation (`obs`), and at least 2/3 is male (`M`). A missing male-line detection retains a recent hit for the existing one-second grace period.
+Relative video, model, custom tracker and output paths resolve against the TOML file's directory. The default config is located relative to `run_track.py`, independently of the working directory. If copying a config elsewhere, update its relative paths or use absolute paths. Internal tracker names `bytetrack.yaml` and `botsort.yaml` are resolved by Ultralytics.
 
-Common controls include `--window-frames`, `--tracker`, `--obb-conf`, `--obb-iou`, `--hbb-conf`, `--max-frames`, `--gt Male|Female` and `--number-of-shrimps`. Use `--help` for current defaults. Ground-truth labels/counts describe the evaluation input; they are not inferred pond population counts.
+## Settings and behavior
 
-Output root: `general_track/exports/run_track/<video_name>/<timestamp>/`.
+- `video` is a video path or integer camera index. Supply your own input after cloning.
+- `obb_model` defaults to the head/tail OBB checkpoint; `classifier_model` defaults to ResNet50. Compatible ResNet18/34/50, ResNet50-FPN and YOLO classification checkpoints remain supported. No HBB detector is used.
+- `cnn_threshold` is optional, within 0 to 1. Male probability at or above the threshold yields male, otherwise female. Omit it to retain the classifier decision. This runs before the existing per-track majority vote; ties remain male. Explicit thresholds are exported in detections.csv.
+- `max_frames` is an optional positive integer. Omit it for the full video. Enable the commented `max_frames = 30` example for a short test.
+- Head/tail associations orient the head left before extracting the existing classifier region. Ambiguous direction continues to skip that crop.
+- Main-frame labels use compact `1 M` / `1 F` (`?` without an ID), with white text on a dark gray background. Preview labels also show the smoothed male probability, for example `1 F | Pm 0.013`. OBB outlines use cyan-blue for male and green for female. Each run resets display IDs and the detector's existing tracker session.
+- Preview labels use an exponential moving average of raw `male_probability` per track with a one-second time constant: `alpha = 1 - exp(-elapsed_seconds / 1.0)`. Constant-input smoothing is independent of FPS. The first observation is shown immediately; the threshold is the configured `cnn_threshold`, or 0.5 when omitted. A smoothed classification must oppose the displayed label continuously for one second before switching. Missing observations interrupt confirmation; a processing gap above one second neither updates the score nor counts as confirmation. Labels survive short misses and reset after more than three seconds without a valid observation. Each new ID starts independently; detections without an ID display `?` and do not accumulate evidence. The main preview shows the stable ID, sex label and smoothed male probability; the debug panel also shows `Pm` (smoothed male probability) and a separate `CNN` row for the raw prediction. The smoothed score is not calibrated confidence. CSV and final per-track majority voting remain unchanged; saved video uses the same compact label styling but retains raw predictions. Preview voting has been removed. This stabilizes display and does not establish improved accuracy.
+- `water_quality` enables the first-frame water check. `biometrics` independently enables length, OBB width proxy and weight estimation. Both true enables complete monitoring. Disabled features do not load their missing assets; explicitly enabled missing/incompatible models fail clearly.
+- `water_policy = "stop"` stops a turbid source before shrimp inference; `"report"` records water appearance and continues.
+- Calibration and `weight_mode` retain the existing measurement formulas; see the [monitoring guide](../docs/monitoring-integration.md).
+- `preview` displays and saves. `preview_only` displays without writing video, CSV, crops or monitoring results. Preview needs GUI OpenCV and a display.
+- `debug` includes the classifier panel in saved video and initially in preview. D toggles only the preview panel; Q/Esc exits preview. `save_crops` saves exact classifier inputs unless preview_only is true.
 
-| File | Contents |
+Malformed TOML, unknown fields, invalid types/ranges, missing required values and active model/input paths fail before model inference. Importing the entry or using help does not load Torch or model weights.
+
+## Modules
+
+| Module | Responsibility |
 | --- | --- |
-| `result.mp4` | Annotated video; `--debug` includes the crop/debug panel |
-| `detections.csv` | Per-frame/per-ID male-line detection and voting records |
-| `sliding_windows.csv` | Complete per-ID voting windows |
-| `per_shrimp.csv` | Per-ID final state and vote summary |
-| `video_info.csv` | Test-video metadata, including supplied ground truth/count |
-| `window_vote_summary.csv` | Male/female/observation window totals and final prediction |
+| `run_track.py` | Read/validate TOML, create model objects and start the run |
+| `modules/head_tail_pipeline.py` | Coordinate per-frame processing, display IDs and per-track summaries |
+| `modules/obb_track.py` | OBB/ByteTrack invocation, class validation and ordinary detection rows |
+| `modules/sex_classifier.py` | Model loading, classifier preprocessing and probabilities |
+| `modules/head_tail_common.py` | Association, rectification, head-left orientation and classifier region |
+| `modules/visualization.py` | Overlays, debug panels and preview |
+| `modules/preview_smoothing.py` | Time-aware probability smoothing, switch confirmation and per-ID preview state |
+| `modules/output.py` | Run directory, annotated video, classifier crops and CSV output |
 
-## Head/tail tracking and a sex classifier
+The old `modules/config.py` is removed. Feature modules do not read the TOML or import global model settings. `HeadTailShrimpAnalyzer` now accepts constructed OBB/classifier objects, not model filenames or implicit global model defaults. `modules.analyzer.ShrimpSexRatioAnalyzer` remains an alias. For Python use, call `load_settings(path)`, `create_analyzer(settings)` from `run_track.py`, then `.run()` with the execution fields. The existing `.run()` result dictionary is retained.
+
+## Outputs and external callers
+
+Runs save `result.mp4`, `detections.csv`, `per_shrimp.csv` and optional `classifier_crops/` under `output_root/<video>/<timestamp>/`. When the same path already exists, a numeric suffix prevents overwriting an earlier run. Monitoring appends its original fields, summaries and files.
+
+The web result reader remains compatible with the exported schema. The current web worker still sends removed CLI options, so its invocation must be migrated separately before end-to-end web inference can run. Neither web nor shared monitoring source is changed in this refactor.
+
+The [EMA tuning snapshot](../docs/ema-threshold-results.md) reports a candidate
+preview threshold of 0.14, not an applied default. Preview smoothing currently
+shares `cnn_threshold`; there is no separate EMA-threshold TOML setting.
+
+Use the existing root environment for tests:
 
 ```powershell
-python -m general_track.run_head_tail_track --video video/sample.mp4 --monitoring --water-policy report --max-frames 30 --debug
+$env:PYTHONPATH = "tracking"
+.\.venv\Scripts\python.exe -m pytest tracking/tests -q
 ```
-
-This mode rectifies and orients the shrimp crop, then extracts the existing classification region before classifying female/male. It retains per-track majority-vote behavior.
-
-The default is **`model/cnn/best_resnet18-run3.pt`**, selected through `MODEL_SEX_CLASSIFIER_PATH`. Other compatible classifiers can be selected with `--classifier-model`; `--cnn-model` remains a compatibility alias. The upstream loader supports ResNet18/34/50, ResNet50-FPN and YOLO classification checkpoints with the expected format. For example:
-
-```powershell
-python -m general_track.run_head_tail_track --video video/sample.mp4 --classifier-model model/cnn/best_resnet34-run3.pt --monitoring --water-policy report
-```
-
-The optional `model/yolo/best-cls-yolo11m-run3.pt` was not available for local validation. Supply a valid classification checkpoint before selecting it; do not substitute an OBB or HBB detection checkpoint. Output root is `general_track/exports/head_tail_cls/`, containing `result.mp4`, `detections.csv` and `per_shrimp.csv` within each run.
-
-## Preview, monitoring and model checks
-
-- `--preview` displays and saves; `--preview-only` displays without writing output. A GUI-capable OpenCV build and display are required. Without preview, `--debug` still exports the debug panel.
-- Preview scales proportionally to the display. The tracking/measurement coordinates remain those of the source frame.
-- `--monitoring` enables both features; omit it for original behavior, or use `--water-quality`/`--biometrics` separately.
-- Direct Python water policy defaults to `stop`; examples explicitly use `report`. A stopped turbid source does not produce fabricated measurements.
-- Enabled saved-output runs add `monitoring.json`, water records and size/weight fields. Estimates retain the legacy calibration and require new-camera validation; width is an OBB proxy, not anatomical body width.
-- The head/tail checkpoint must be an OBB model with `shrimp`, `shrimp_head` and `shrimp_tail`. A `task=classify` checkpoint with `female`/`male` names is not a substitute.
-
-Defaults live in `modules/config.py` and resolve relative to `tracking/project_paths.py`. Explicit relative CLI overrides use the working directory. Active flow files are `modules/track_pipeline.py`, `modules/head_tail_pipeline.py`, and shared `modules/head_tail_common.py`. Upstream credit and historical validation are retained in the [tracking README](../README.md).
