@@ -6,7 +6,7 @@ This monorepo keeps the application and analyzer separate:
 
 ```text
 TIDE-Shrimp-Monitoring/
-  tracking/             # Integrated Python analyzer; private weights and its own .venv
+  tracking/             # Python analyzer, bundled monitoring models, separate .venv
   web/                  # This application
     frontend/           # Next.js, TypeScript, Motion, Recharts
     backend/            # FastAPI, SQLAlchemy, worker
@@ -17,7 +17,7 @@ TIDE-Shrimp-Monitoring/
     compose.yaml        # Dedicated PostgreSQL service
 ```
 
-The web worker calls the analyzer under `tracking/` without duplicating its model or tracking implementation.
+The web worker calls the analyzer under `tracking/` without duplicating its model or tracking implementation. It enables `--monitoring`, which loads the four bundled regression models from `tracking/model/biometrics/` and the water checkpoint from `tracking/model/water/`. The selected mode's additional detector and sex-classification weights must still be supplied as described in the [tracking setup](../tracking/README.md).
 
 ## Using the application
 
@@ -269,4 +269,4 @@ With the API ready, no other worker and an empty queue, this optional smoke test
 
 It uploads the supplied video and writes a validation-pond record. No sample video is bundled.
 
-Do not commit `.env`, virtual environments, `.local`, `storage`, private videos/stills or model weights. Ignore rules exclude these; public deployment controls and backup/retention policies still need implementation.
+Do not commit `.env`, virtual environments, `.local`, `storage`, private videos/stills or unpublished model weights. Ignore rules exclude these, with explicit exceptions for the five published monitoring checkpoints; public deployment controls and backup/retention policies still need implementation.

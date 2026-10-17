@@ -88,7 +88,7 @@ The user-provided newer bundle contained one head/tail OBB, four single-frame HB
 
 All four files load even in length-only mode. They must support `joblib.load`, `.predict()` and compatible `n_features_in_`. Their saved scikit-learn version was `1.6.1`. Water weights must expose `linear.weight` and `linear.bias` for the original `Linear(784, 2)` state dictionary. Different architectures require loader changes. Missing/incompatible files cause explicit errors. Only load serialized models from trusted sources.
 
-The [asset manifest](../model/assets-manifest.json) records bundle names/hashes; [regression provenance](../model/biometrics/provenance.json) records source revision, hashes, estimator types, coefficients and calibration evidence. Weights are omitted from publication and must be obtained separately. Some inherited videos use Git LFS, but LFS pull does not retrieve the omitted model bundle.
+The [asset manifest](../model/assets-manifest.json) records bundle names/hashes; [regression provenance](../model/biometrics/provenance.json) records source revision, hashes, estimator types, coefficients and calibration evidence. The four regression models and water checkpoint are included as ordinary Git files. The newer detector/classifier weights must still be obtained separately. Some inherited videos use Git LFS, but LFS pull does not retrieve that omitted detector/classifier bundle.
 
 ## Integration files and outputs
 
@@ -110,4 +110,4 @@ Enabled monitoring writes `monitoring.json` with status, model locations, refere
 
 Tests cover regression feature order, rounding, rotation/resolution, water preprocessing, tracker/ID preservation, stop/report policies, first-frame handling, exports and cleanup. These checks do not establish physical accuracy or full-video endurance. Temporal inference additionally requires a compatible nine-channel model.
 
-After supplying the original water/regression assets, run `python -m pytest tests -q` from `tracking/`. The [original upstream README](README-original.md) is preserved for attribution; use the current [tracking README](../README.md) for setup.
+After installing the tracking dependencies, run `python -m pytest tests -q` from `tracking/`; the original water/regression assets are bundled. The [original upstream README](README-original.md) is preserved for attribution; use the current [tracking README](../README.md) for setup.

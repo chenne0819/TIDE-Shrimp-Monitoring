@@ -37,11 +37,13 @@ If PowerShell activation is blocked, use `.\.venv\Scripts\python.exe` instead of
 
 `requirements.txt` contains runtime dependencies; `requirements-dev.txt` adds pytest. `scikit-learn==1.6.1` matches the original serialized regressors. These are dependency constraints, not a complete environment lock. Install a suitable CUDA PyTorch build separately if needed. Recreate virtual environments on another computer instead of copying them.
 
-## Private model assets required after cloning
+## Included monitoring models and additional detector assets
 
-**This publication includes code and provenance metadata, not the private weights, a prepared environment, or calibrated camera data.** Obtain compatible weights separately from the maintainer. There is currently no public model download; `git lfs pull` does not supply the omitted bundle.
+**The four original regression models and the water-classification checkpoint are included in this repository.** They are ordinary Git files, so cloning retrieves them without Git LFS. Their bytes match the [published ShrimpVisionRT models](https://github.com/chenne0819/ShrimpVisionRT/tree/b5e75baafc84cbcf1c88fe178d3512289e657e7c/shrimp_OBB/Model).
 
-Place assets under `tracking/model/` with these filenames:
+The trained YOLO detector and sex-classification bundle is still not included; obtain compatible weights separately from the maintainer. `git lfs pull` does not supply that omitted bundle. A prepared environment, original measurement spreadsheets/training datasets, and calibration for your camera are also not included.
+
+Use this layout under `tracking/model/`; `water/` and the four files in `biometrics/` are already populated in a fresh clone:
 
 ```text
 model/
@@ -56,17 +58,17 @@ model/
     best_resnet34-run3.pt              # Optional alternative
     best_resnet50-run3.pt              # Optional alternative
   water/
-    logistic_regression_model.pth
+    logistic_regression_model.pth      # Included water classifier
   biometrics/
-    final_linear_model_length.pkl
-    final_linear_model_width.pkl
-    polynomial_regression_model_degree3.pkl
-    multi_feature_model.pkl
+    final_linear_model_length.pkl     # Included length regression
+    final_linear_model_width.pkl      # Included width regression
+    polynomial_regression_model_degree3.pkl # Included length-only weight model
+    multi_feature_model.pkl           # Included length + width weight model
     provenance.json                   # Included metadata, not a model
   assets-manifest.json                 # Included origins, filenames and hashes
 ```
 
-Only the detector/classifier for your selected mode is required. Water classification requires its checkpoint; biometrics requires all four regressors, even in length-only weight mode.
+Only the additional detector/classifier files for your selected mode are required. Water classification uses the bundled checkpoint; biometrics loads all four bundled regressors, even in length-only weight mode. `--monitoring` enables both, and the web worker supplies this option automatically.
 
 | Entry point | Default models relative to `tracking/` |
 | --- | --- |
@@ -79,7 +81,7 @@ The optional YOLO sex classifier at `model/yolo/best-cls-yolo11m-run3.pt` was al
 
 Default model locations resolve relative to `project_paths.py`, so they follow the `tracking/` directory when it moves. Explicit relative model, video and output paths use the working directory. Logs may display resolved absolute paths; defaults are not tied to a user account or drive.
 
-The newer detection/classification bundle was user-provided. The water and regression weights were recovered unchanged from the user's original local ShrimpVisionRT `shrimp_OBB/Model` directory; no random replacement weights were used. The [asset manifest](model/assets-manifest.json) and [regression provenance](model/biometrics/provenance.json) record origins, hashes and model details without personal source paths. These describe previously available local assets, not weights included in a fresh clone.
+The newer detection/classification bundle was user-provided. The bundled water and regression weights were recovered unchanged from the user's original local ShrimpVisionRT `shrimp_OBB/Model` directory; no random replacement weights were used. The [asset manifest](model/assets-manifest.json) and [regression provenance](model/biometrics/provenance.json) record origins, hashes and model details without personal source paths. The manifest also describes detector/classifier assets that must be obtained separately.
 
 ## Run inference
 
@@ -144,12 +146,12 @@ These numbers are not a supplied calibration. Check against measured shrimp leng
 
 ## Tests and upstream credits
 
-After supplying the original water checkpoint and four regressors, run from `tracking/`:
+After installing the tracking dependencies, run from `tracking/`:
 
 ```powershell
 python -m pytest tests -q
 ```
 
-The full suite includes real-asset checks; a code-only clone cannot reproduce all of them without those files. See the [integration guide](docs/monitoring-integration.md) for model contracts and outputs.
+The monitoring tests include real-asset checks against the bundled water checkpoint and four regressors. See the [integration guide](docs/monitoring-integration.md) for model contracts and outputs.
 
 Tracking/sex inference is based on Shrimp-Male-Yolo-Tracking revision `5662c81ba1ad86b04cbc0bfe6206df1599dbc36a`. Water/regression compatibility is based on ShrimpVisionRT revision `dd876980b83e42986b54c1ebeb52017c0728f113`. The body of the [original upstream README archive](docs/README-original.md) is preserved verbatim in its original language, beneath an English archive note. Its old commands and paths are historical reference; this README and current CLI help are the maintained setup instructions.

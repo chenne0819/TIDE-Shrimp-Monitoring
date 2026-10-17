@@ -4,7 +4,7 @@ __pycache__
 .codex
 .pytest_cache/
 validation_outputs/
-# Model assets are local; their hashes and sources are documented separately.
+# Regression assets are local unless explicitly published below.
 model/**/*.pkl
 general_track/exports/
 multi_channel_track/exports/
@@ -40,3 +40,10 @@ predict/**/*.png
 
 # Ultralytics training logs.
 runs
+
+# Published ShrimpVisionRT monitoring models (ordinary Git files, not LFS).
+!/model/biometrics/final_linear_model_length.pkl
+!/model/biometrics/final_linear_model_width.pkl
+!/model/biometrics/polynomial_regression_model_degree3.pkl
+!/model/biometrics/multi_feature_model.pkl
+!/model/water/logistic_regression_model.pth

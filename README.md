@@ -31,7 +31,7 @@ The application interface and AI answers remain in Traditional Chinese. Maintain
 
 This repository is a fork of [NxBLANKxN/Shrimp-Male-Yolo-Tracking](https://github.com/NxBLANKxN/Shrimp-Male-Yolo-Tracking), based on upstream revision [`5662c81`](https://github.com/NxBLANKxN/Shrimp-Male-Yolo-Tracking/commit/5662c81ba1ad86b04cbc0bfe6206df1599dbc36a). Its detection, tracking and sex-classification implementation remains the foundation of `tracking/`.
 
-Water classification and biometric conversion were adapted from [chenne0819/ShrimpVisionRT](https://github.com/chenne0819/ShrimpVisionRT), revision [`dd87698`](https://github.com/chenne0819/ShrimpVisionRT/commit/dd876980b83e42986b54c1ebeb52017c0728f113). Model provenance, hashes and reference geometry are documented in [the asset manifest](tracking/model/assets-manifest.json) and [biometric provenance](tracking/model/biometrics/provenance.json). The manifests are descriptions, not downloadable weights.
+Water classification and biometric conversion were adapted from [chenne0819/ShrimpVisionRT](https://github.com/chenne0819/ShrimpVisionRT), revision [`dd87698`](https://github.com/chenne0819/ShrimpVisionRT/commit/dd876980b83e42986b54c1ebeb52017c0728f113). The four original regression models are included in [tracking/model/biometrics/](tracking/model/biometrics/), and the water classifier checkpoint is included in [tracking/model/water/](tracking/model/water/). Model provenance, hashes and reference geometry are documented in [the asset manifest](tracking/model/assets-manifest.json) and [biometric provenance](tracking/model/biometrics/provenance.json).
 
 The upstream Git history is retained. The [original upstream README](tracking/docs/README-original.md) is preserved for attribution and historical context.
 
@@ -62,7 +62,8 @@ AI is disabled by default. The `codex` provider uses an existing local Codex log
 
 ## Models and measurement limits
 
-- Local model weights are excluded from the new integration commits. Obtain authorized copies separately and follow the documented `tracking/model/` layout. Inherited upstream LFS entries retain their original history; they do not provide the newly integrated private weights.
+- The four `.pkl` regression models and water-classification `.pth` checkpoint are included as ordinary Git files. They are used by `--monitoring`; the web worker enables this option automatically. The regression environment uses `scikit-learn==1.6.1`.
+- The selected mode's trained YOLO detector and sex-classification weights must still be obtained separately using the documented `tracking/model/` layout. Inherited upstream LFS entries do not supply that private bundle. Original measurement spreadsheets and training datasets are not included.
 - Water results describe image appearance (`clear` / `turbid`) from the first frame. They are not pH, dissolved oxygen or a complete water-quality measurement.
 - Width is an OBB short-edge proxy; length and weight are model estimates. The inherited reference is 800 × 450 at 2.5 pixels/mm. Recalibrate after changing the camera, distance, framing or geometry; resizing alone does not establish a physical scale.
 - General tracking, head/tail tracking and single-frame analysis are available. The optional temporal multi-channel mode still needs a compatible nine-channel HBB checkpoint.
@@ -70,12 +71,12 @@ AI is disabled by default. The `codex` provider uses an existing local Codex log
 
 ## Privacy and deployment
 
-The ignore rules exclude local `.env` files, authentication caches, keys, databases, uploaded recordings, private demo footage, model weights, virtual environments and build output. Only configuration templates are included. Keep credentials on the server; never place them in `NEXT_PUBLIC_*` variables.
+The ignore rules exclude local `.env` files, authentication caches, keys, databases, uploaded recordings, private demo footage, unpublished model weights, virtual environments and build output. The five published monitoring checkpoints have explicit exceptions in `tracking/.gitignore`. Only configuration templates are included for environment settings. Keep credentials on the server; never place them in `NEXT_PUBLIC_*` variables.
 
 The current application is intended for a trusted local environment. Public multi-user deployment requires application authentication and appropriate deployment controls, including HTTPS, record authorization, upload quotas, storage retention and backups. Preserve upstream authorship and any applicable source/dependency notices when redistributing; this repository does not declare a new blanket license for upstream code or external model assets.
 
 ## Tests and contributions
 
-Test commands are documented in the [tracking setup](tracking/README.md#tests-and-upstream-credits) and [web setup](web/README.md#animation-and-checks). Some tracking tests require the separately supplied monitoring models. Software tests do not establish model accuracy.
+Test commands are documented in the [tracking setup](tracking/README.md#tests-and-upstream-credits) and [web setup](web/README.md#animation-and-checks). The monitoring tests use the bundled regression and water models. Software tests do not establish model accuracy.
 
 For future changes, use focused English commit messages and keep functional changes separate from broad formatting or directory moves. Include the checks that were actually run. Never commit credentials or private recordings when adding a reproducible test case.

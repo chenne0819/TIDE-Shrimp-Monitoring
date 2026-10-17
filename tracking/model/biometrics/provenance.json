@@ -2,7 +2,8 @@
   "source_repository": "https://github.com/chenne0819/ShrimpVisionRT",
   "source_revision": "dd876980b83e42986b54c1ebeb52017c0728f113",
   "local_model_source": "Original local ShrimpVisionRT shrimp_OBB/Model directory",
-  "recovery_note": "Upstream omits these model assets. Recovered unchanged from the user's original local shrimp_OBB/Model directory. The local shrimp_OBB/utils/plots.py is SHA-256-identical to the cloned revision.",
+  "recovery_note": "The original source revision omitted these model assets. Recovered unchanged from the user's original local shrimp_OBB/Model directory. The local shrimp_OBB/utils/plots.py was SHA-256-identical to that revision. The recovered models are now included in this repository and in the published source below.",
+  "published_model_source": "https://github.com/chenne0819/ShrimpVisionRT/tree/b5e75baafc84cbcf1c88fe178d3512289e657e7c/shrimp_OBB/Model",
   "source_plots_sha256": "a38710b818bafd0089da93c8f16fcb2fc364d347458e0a4961cd43b941fb6f03",
   "saved_sklearn_version": "1.6.1",
   "reference_size_width_height": [
