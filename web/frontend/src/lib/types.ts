@@ -8,6 +8,7 @@ export type Job = {
   created_at: string;
   status: JobStatus;
   progress: number;
+  // Existing recordings retain their original mode, including retired entries.
   mode: "general" | "head_tail" | "predict";
   water_label: "clear" | "turbid" | null;
   water_confidence: number | null;

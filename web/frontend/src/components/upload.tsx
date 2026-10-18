@@ -245,9 +245,7 @@ export function Upload({ demo }: { demo: boolean }) {
               <label className="form-field form-field-wide">
                 分析模式
                 <select value={mode} onChange={(e) => setMode(e.target.value)}>
-                  <option value="general">一般追蹤（OBB + HBB）</option>
-                  <option value="head_tail">頭尾追蹤（OBB + 分類）</option>
-                  <option value="predict">單幀分析</option>
+                  <option value="general">頭尾追蹤（OBB + CNN 分類）</option>
                 </select>
               </label>
               <label className="form-field form-field-wide">

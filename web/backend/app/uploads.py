@@ -15,7 +15,7 @@ class UploadFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pond: str = "A-01"
     recorded_at: str | None = None
-    mode: Literal["general", "head_tail", "predict"] = "general"
+    mode: Literal["general", "head_tail"] = "general"
     water_policy: Literal["stop", "report"] = "report"
     max_frames: int | None = Field(default=None, gt=0, le=2_147_483_647)
 

@@ -1,198 +1,37 @@
 from __future__ import annotations
 
-import pickle
 from collections import Counter, defaultdict
-from collections import OrderedDict
-from datetime import datetime
 from pathlib import Path
+import time
 
 import cv2
 import numpy as np
-import torch
-from torch import nn
-from torchvision import models
-from torchvision.ops import FeaturePyramidNetwork
 from tqdm import tqdm
-from ultralytics import YOLO
 
 from shrimp_monitoring import MonitoringSession, summarize_measurements
 
-from .config import (
-    IMGSZ_OBB,
-    MODEL_HEAD_TAIL_OBB_PATH,
-    MODEL_SEX_CLASSIFIER_PATH,
-)
-from .head_tail_common import (
-    associated_centers,
-    combine_preview,
-    crop_classifier_region,
-    debug_video_size as make_debug_video_size,
-    fit_preview_to_screen,
-    letterbox,
-    obb_rows,
-    orient_head_left,
-    rectify_shrimp,
-    show_preview_or_raise,
-    split_head_tail_rows,
-    validate_head_tail_obb_model,
-    write_csv,
-)
-
-
-REQUIRED_SEX_CLASSES = {"female", "male"}
-
-
-class ResNet50FPNClassifier(nn.Module):
-    def __init__(self, num_classes: int, dropout: float = 0.5, fpn_channels: int = 256) -> None:
-        super().__init__()
-        resnet = models.resnet50(weights=None)
-        self.stem = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
-        self.layer1 = resnet.layer1
-        self.layer2 = resnet.layer2
-        self.layer3 = resnet.layer3
-        self.layer4 = resnet.layer4
-        self.fpn = FeaturePyramidNetwork(
-            in_channels_list=[256, 512, 1024, 2048],
-            out_channels=fpn_channels,
-        )
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            nn.Dropout(dropout),
-            nn.Linear(fpn_channels * 4, num_classes),
-        )
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        x = self.stem(inputs)
-        c2 = self.layer1(x)
-        c3 = self.layer2(c2)
-        c4 = self.layer3(c3)
-        c5 = self.layer4(c4)
-        features = self.fpn(OrderedDict([("c2", c2), ("c3", c3), ("c4", c4), ("c5", c5)]))
-        pooled = [self.pool(features[name]).flatten(1) for name in ("c2", "c3", "c4", "c5")]
-        return self.classifier(torch.cat(pooled, dim=1))
-
-
-class ShrimpSexClassifier:
-    """Load the female/male ResNet18 checkpoint used by the training pipeline."""
-
-    def __init__(self, model_path: str, device: str | None = None) -> None:
-        self.path = Path(model_path)
-        if not self.path.exists():
-            raise FileNotFoundError(f"Sex classifier not found: {self.path}")
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        checkpoint = torch.load(self.path, map_location=self.device)
-        self.class_to_idx = checkpoint["class_to_idx"]
-        if set(self.class_to_idx) != REQUIRED_SEX_CLASSES:
-            raise ValueError(f"Expected CNN classes {sorted(REQUIRED_SEX_CLASSES)}, got {self.class_to_idx}")
-        self.architecture = str(checkpoint.get("architecture", checkpoint.get("model", "resnet18"))).lower()
-
-        self.image_size = int(checkpoint.get("image_size", 128))
-        self.grayscale = bool(checkpoint.get("grayscale", False))
-        if self.architecture == "resnet18":
-            model = models.resnet18(weights=None)
-        elif self.architecture == "resnet34":
-            model = models.resnet34(weights=None)
-        elif self.architecture == "resnet50":
-            model = models.resnet50(weights=None)
-        elif self.architecture == "resnet50_fpn":
-            model = ResNet50FPNClassifier(
-                num_classes=len(self.class_to_idx),
-                dropout=float(checkpoint.get("dropout", 0.5)),
-                fpn_channels=int(checkpoint.get("fpn_channels", 256)),
-            )
-        else:
-            raise ValueError(f"Unsupported classifier architecture: {self.architecture}")
-        state_dict = checkpoint["model_state"]
-        if self.architecture == "resnet50_fpn":
-            pass
-        elif "fc.1.weight" in state_dict:
-            model.fc = torch.nn.Sequential(
-                torch.nn.Dropout(float(checkpoint.get("dropout", 0.5))),
-                torch.nn.Linear(model.fc.in_features, len(self.class_to_idx)),
-            )
-        elif "fc.weight" in state_dict:
-            model.fc = torch.nn.Linear(model.fc.in_features, len(self.class_to_idx))
-        else:
-            raise ValueError("Unsupported classifier head format: expected fc.weight or fc.1.weight")
-        model.load_state_dict(state_dict)
-        self.model = model.to(self.device).eval()
-        self.labels = {index: name for name, index in self.class_to_idx.items()}
-        self.mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
-        self.std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
-
-    def predict(self, crop_bgr: np.ndarray) -> tuple[str, float, float]:
-        if crop_bgr is None or crop_bgr.size == 0:
-            raise ValueError("Cannot classify an empty crop")
-        image = cv2.resize(crop_bgr, (self.image_size, self.image_size), interpolation=cv2.INTER_AREA)
-        if self.grayscale:
-            image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        tensor = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0).to(self.device)
-        tensor = (tensor - self.mean) / self.std
-        with torch.no_grad():
-            probabilities = torch.softmax(self.model(tensor), dim=1)[0]
-        index = int(torch.argmax(probabilities).item())
-        return self.labels[index], float(probabilities[index]), float(probabilities[self.class_to_idx["male"]])
-
-
-class YoloShrimpSexClassifier:
-    """Female/male classifier backed by an Ultralytics YOLO classification model."""
-
-    def __init__(self, model_path: str) -> None:
-        self.path = Path(model_path)
-        if not self.path.exists():
-            raise FileNotFoundError(f"YOLO sex classifier not found: {self.path}")
-        self.model = YOLO(str(self.path))
-        if self.model.task != "classify":
-            raise ValueError(f"Expected a YOLO classification model, got task: {self.model.task}")
-        self.class_to_idx = {name: int(index) for index, name in self.model.names.items()}
-        if set(self.class_to_idx) != REQUIRED_SEX_CLASSES:
-            raise ValueError(f"Expected YOLO classes {sorted(REQUIRED_SEX_CLASSES)}, got {self.class_to_idx}")
-        self.architecture = "yolo-classify"
-        model_args = getattr(self.model.model, "args", {}) or {}
-        self.image_size = int(model_args.get("imgsz", 224))
-
-    def predict(self, crop_bgr: np.ndarray) -> tuple[str, float, float]:
-        if crop_bgr is None or crop_bgr.size == 0:
-            raise ValueError("Cannot classify an empty crop")
-        result = self.model.predict(crop_bgr, imgsz=self.image_size, verbose=False)[0]
-        if result.probs is None:
-            raise ValueError("YOLO classification model returned no probabilities")
-        probabilities = result.probs.data.detach().cpu().numpy()
-        index = int(np.argmax(probabilities))
-        label = self.model.names[index]
-        return label, float(probabilities[index]), float(probabilities[self.class_to_idx["male"]])
-
-
-def load_sex_classifier(model_path: str):
-    """Load a custom ResNet checkpoint or fall back to Ultralytics classification."""
-    try:
-        return ShrimpSexClassifier(model_path)
-    except (KeyError, TypeError, RuntimeError, ValueError, pickle.UnpicklingError) as resnet_error:
-        try:
-            return YoloShrimpSexClassifier(model_path)
-        except Exception:
-            raise resnet_error
+from .head_tail_common import associated_centers, crop_classifier_region, orient_head_left, rectify_shrimp, split_head_tail_rows
+from .obb_track import detect_obb_rows, reset_obb_tracking
+from .output import RunOutput
+from .preview_smoothing import PreviewSmoothing
+from . import visualization
 
 
 class HeadTailShrimpAnalyzer:
-    def __init__(
-        self,
-        obb_model_path: str = MODEL_HEAD_TAIL_OBB_PATH,
-        cnn_model_path: str = MODEL_SEX_CLASSIFIER_PATH,
-        monitoring: MonitoringSession | None = None,
-    ) -> None:
-        self.obb_model_path = obb_model_path
-        self.cnn_model_path = cnn_model_path
-        self.monitoring = monitoring or MonitoringSession()
-        self.obb_model = YOLO(obb_model_path)
-        validate_head_tail_obb_model(self.obb_model)
-        self.classifier = load_sex_classifier(cnn_model_path)
-        self._shrimp_display_ids: dict[int, int] = {}
+    def __init__(self, obb_model, classifier, monitoring=None, cnn_threshold=None, imgsz=640):
+        if cnn_threshold is not None:
+            cnn_threshold = float(cnn_threshold)
+            if not np.isfinite(cnn_threshold) or not 0 <= cnn_threshold <= 1:
+                raise ValueError("CNN threshold must be a finite value between 0 and 1.")
+        self.cnn_threshold = cnn_threshold
+        self.obb_model = obb_model
+        self.classifier = classifier
+        self.monitoring = monitoring if monitoring is not None else MonitoringSession()
+        self.imgsz = imgsz
+        self._shrimp_display_ids = {}
         self._next_display_id = 1
 
-    def _display_track_id(self, raw_track_id: int | None) -> int | None:
-        """Map shared multi-class ByteTrack IDs to shrimp-only sequential IDs."""
+    def _display_track_id(self, raw_track_id):
         if raw_track_id is None:
             return None
         raw_track_id = int(raw_track_id)
@@ -201,16 +40,13 @@ class HeadTailShrimpAnalyzer:
             self._next_display_id += 1
         return self._shrimp_display_ids[raw_track_id]
 
-    def _detect(self, frame: np.ndarray, tracker: str | None, conf: float, iou: float):
-        kwargs = {"conf": conf, "iou": iou, "imgsz": IMGSZ_OBB, "verbose": False, "persist": True}
-        kwargs["tracker"] = tracker or "bytetrack.yaml"
-        return self.obb_model.track(frame, **kwargs)[0]
+    def _detect(self, frame, tracker, conf, iou):
+        return detect_obb_rows(self.obb_model, frame, tracker, conf=conf, iou=iou, imgsz=self.imgsz)
 
     def _process_frame(
-        self, frame: np.ndarray, result, frame_index: int, fps: float
-    ) -> tuple[list[dict], np.ndarray, list[dict]]:
-        shrimps, heads, tails = split_head_tail_rows(obb_rows(result))
-        annotated = frame.copy()
+        self, frame: np.ndarray, rows, frame_index: int, fps: float
+    ) -> tuple[list[dict], list[dict]]:
+        shrimps, heads, tails = split_head_tail_rows(rows)
         records = []
         debug_items = []
 
@@ -224,14 +60,20 @@ class HeadTailShrimpAnalyzer:
                 continue
             classifier_crop = crop_classifier_region(oriented)
             label, confidence, male_probability = self.classifier.predict(classifier_crop)
+            if self.cnn_threshold is not None:
+                label = "male" if male_probability >= self.cnn_threshold else "female"
+                confidence = male_probability if label == "male" else 1.0 - male_probability
             raw_track_id = shrimp["track_id"]
             track_id = self._display_track_id(raw_track_id)
             debug_items.append(
                 {
                     "crop": oriented,
+                    "polygon": polygon,
+                    "classifier_crop": classifier_crop,
                     "track_id": track_id,
                     "label": label,
                     "confidence": confidence,
+                    "male_probability": male_probability,
                     "orientation_source": orientation_source,
                 }
             )
@@ -248,216 +90,41 @@ class HeadTailShrimpAnalyzer:
                     "head_count": len(inside_heads),
                     "tail_count": len(inside_tails),
                     "orientation_source": orientation_source,
-                    "classifier_crop": classifier_crop,
                     **self.monitoring.measure(polygon, frame.shape),
                 }
             )
-            color = (255, 120, 40) if label == "male" else (0, 200, 0)
-            cv2.polylines(annotated, [polygon.astype(np.int32)], True, color, 2)
-            anchor = tuple(polygon[np.argmin(polygon[:, 1])].astype(int))
-            identity = f"ID {track_id}" if track_id is not None else "ID ?"
-            cv2.putText(
-                annotated,
-                f"{identity} {label} {confidence:.2f}",
-                anchor,
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                color,
-                2,
-                cv2.LINE_AA,
-            )
-            self.monitoring.annotate_measurement(annotated, records[-1], anchor)
-        self.monitoring.annotate_water(annotated)
-        return records, annotated, debug_items
+            if self.cnn_threshold is not None:
+                records[-1]["cnn_threshold"] = self.cnn_threshold
+        return records, debug_items
 
-    @staticmethod
-    def _make_debug_view(items: list[dict], frame_index: int) -> np.ndarray:
-        """Build a tiled view with the exact ResNet18 abdomen interval highlighted."""
-        tile_width, tile_height = 480, 180
-        tiles = []
-        for item in items:
-            crop = item["crop"]
-            height, total_length = crop.shape[:2]
-            left = total_length // 4
-            right = total_length - total_length // 2
-            top = height // 5
-            bottom = height - height // 5
-            marked = crop.copy()
-            overlay = marked.copy()
-            cv2.rectangle(overlay, (left, top), (max(left, right - 1), max(top, bottom - 1)), (0, 255, 255), -1)
-            marked = cv2.addWeighted(overlay, 0.28, marked, 0.72, 0)
-            cv2.rectangle(marked, (left, top), (max(left, right - 1), max(top, bottom - 1)), (0, 255, 255), 2)
-
-            scale = min(tile_width / max(1, total_length), (tile_height - 42) / max(1, height))
-            resized = cv2.resize(
-                marked,
-                (max(1, int(round(total_length * scale))), max(1, int(round(height * scale)))),
-                interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR,
-            )
-            tile = np.full((tile_height, tile_width, 3), 28, dtype=np.uint8)
-            y = 38 + max(0, (tile_height - 38 - resized.shape[0]) // 2)
-            x = max(0, (tile_width - resized.shape[1]) // 2)
-            tile[y : y + resized.shape[0], x : x + resized.shape[1]] = resized
-            identity = item["track_id"] if item["track_id"] is not None else "?"
-            text = f"ID {identity} | {item['label']} {item['confidence']:.2f}"
-            cv2.putText(tile, text, (8, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (235, 235, 235), 2, cv2.LINE_AA)
-            tiles.append(tile)
-
-        if not tiles:
-            empty = np.full((tile_height, tile_width, 3), 28, dtype=np.uint8)
-            cv2.putText(
-                empty,
-                f"Frame {frame_index}: no valid shrimp crops",
-                (20, tile_height // 2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (220, 220, 220),
-                1,
-                cv2.LINE_AA,
-            )
-            return empty
-
-        return cv2.vconcat(tiles)
-
-    @staticmethod
-    def _combine_preview(main_view: np.ndarray, debug_view: np.ndarray) -> np.ndarray:
-        """Attach a large, vertically stacked debug panel to the main preview."""
-        main_height, main_width = main_view.shape[:2]
-        panel_width = min(480, max(360, main_width // 3))
-        scale = panel_width / max(1, debug_view.shape[1])
-        resized_width = panel_width
-        resized_height = max(1, int(round(debug_view.shape[0] * scale)))
-        interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-        resized_debug = cv2.resize(debug_view, (resized_width, resized_height), interpolation=interpolation)
-        canvas_height = max(main_height, resized_height)
-        main_panel = np.full((canvas_height, main_width, 3), 28, dtype=np.uint8)
-        debug_panel = np.full((canvas_height, panel_width, 3), 28, dtype=np.uint8)
-        main_y = (canvas_height - main_height) // 2
-        main_panel[main_y : main_y + main_height] = main_view
-        debug_panel[:resized_height] = resized_debug
-        separator = np.full((canvas_height, 4, 3), 90, dtype=np.uint8)
-        return cv2.hconcat([main_panel, separator, debug_panel])
-
-    @staticmethod
-    def _screen_work_area() -> tuple[int, int] | None:
-        """Return the Windows desktop work area, excluding the taskbar when available."""
-        try:
-            import ctypes
-
-            class Rect(ctypes.Structure):
-                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
-
-            rect = Rect()
-            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
-                return int(rect.right - rect.left), int(rect.bottom - rect.top)
-            return int(ctypes.windll.user32.GetSystemMetrics(0)), int(ctypes.windll.user32.GetSystemMetrics(1))
-        except (AttributeError, OSError, ValueError):
-            return None
-
-    @classmethod
-    def _fit_preview_to_screen(cls, image: np.ndarray) -> np.ndarray:
-        """Resize the complete preview proportionally to fit the current desktop."""
-        screen = cls._screen_work_area()
-        if screen is None:
-            return image
-        screen_width, screen_height = screen
-        height, width = image.shape[:2]
-        target_width = max(1, int(screen_width * 0.90))
-        target_height = max(1, int(screen_height * 0.85))
-        scale = min(target_width / max(1, width), target_height / max(1, height))
-        resized_width = max(1, int(round(width * scale)))
-        resized_height = max(1, int(round(height * scale)))
-        if (resized_width, resized_height) == (width, height):
-            return image
-        interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-        return cv2.resize(image, (resized_width, resized_height), interpolation=interpolation)
-
-    @classmethod
-    def _debug_video_size(cls, fallback_image: np.ndarray) -> tuple[int, int]:
-        """Return one fixed, codec-safe canvas size for debug video frames."""
-        screen = cls._screen_work_area()
-        if screen is None:
-            width, height = fallback_image.shape[1], fallback_image.shape[0]
-        else:
-            width, height = int(screen[0] * 0.90), int(screen[1] * 0.85)
-        return max(2, width - width % 2), max(2, height - height % 2)
-
-    @staticmethod
-    def _letterbox(image: np.ndarray, size: tuple[int, int]) -> np.ndarray:
-        """Fit an image into a fixed canvas without changing its aspect ratio."""
-        target_width, target_height = size
-        height, width = image.shape[:2]
-        scale = min(target_width / max(1, width), target_height / max(1, height))
-        resized_width = max(1, int(round(width * scale)))
-        resized_height = max(1, int(round(height * scale)))
-        interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-        resized = cv2.resize(image, (resized_width, resized_height), interpolation=interpolation)
-        canvas = np.full((target_height, target_width, 3), 28, dtype=np.uint8)
-        x = (target_width - resized_width) // 2
-        y = (target_height - resized_height) // 2
-        canvas[y : y + resized_height, x : x + resized_width] = resized
-        return canvas
-
-    @staticmethod
-    def _show_preview_or_raise(window_name: str, image: np.ndarray) -> int:
-        """Show a preview frame, raising a clear error when OpenCV has no GUI backend."""
-        try:
-            cv2.imshow(window_name, image)
-            return cv2.waitKey(1) & 0xFF
-        except cv2.error as error:
-            message = str(error)
-            if "The function is not implemented" in message or "cvShowImage" in message:
-                raise RuntimeError(
-                    "OpenCV GUI backend is not available, so --preview/--preview-only cannot open a window. "
-                    "Install a GUI-enabled OpenCV build, for example: "
-                    "python -m pip uninstall opencv-python-headless opencv-python -y ; "
-                    "python -m pip install opencv-python"
-                ) from error
-            raise
-
-    def run(
-        self,
-        video: str,
-        output_root: str = "general_track/exports/head_tail",
-        tracker: str | None = "bytetrack.yaml",
-        conf: float = 0.6,
-        iou: float = 0.3,
-        max_frames: int | None = None,
-        preview: bool = False,
-        preview_only: bool = False,
-        debug: bool = False,
-        save_crops: bool = False,
-    ) -> dict:
+    def run(self, video, output_root="general_track/exports/run_track", tracker="bytetrack.yaml",
+            conf=0.6, iou=0.3, max_frames=None, preview=False, preview_only=False, debug=False, save_crops=False):
         self.monitoring.reset()
+        reset_obb_tracking(self.obb_model)
+        self._shrimp_display_ids = {}
+        self._next_display_id = 1
         source = int(video) if str(video).strip().isdigit() else video
         capture = cv2.VideoCapture(source)
         if not capture.isOpened():
             capture.release()
             raise FileNotFoundError(f"Cannot open video or camera: {video}")
-        writer = None
+        output = None
         preview = preview or preview_only
+        preview_smoothing = PreviewSmoothing(self.cnn_threshold)
         skipped_turbid = False
         try:
-            fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
+            fps = float(capture.get(cv2.CAP_PROP_FPS))
+            if not np.isfinite(fps) or fps <= 0:
+                fps = 30.0
             frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
             source_name = f"camera_{video}" if isinstance(source, int) else Path(video).stem
-            debug_enabled = bool(debug)
-            self._shrimp_display_ids = {}
-            self._next_display_id = 1
-            run_dir = Path(output_root) / source_name / datetime.now().strftime("%Y%m%d_%H%M%S")
             if not preview_only:
-                run_dir.mkdir(parents=True, exist_ok=True)
-            crop_dir = run_dir / "classifier_crops"
-            if save_crops and not preview_only:
-                crop_dir.mkdir(exist_ok=True)
-            video_path = run_dir / "result.mp4"
-            csv_path = run_dir / "detections.csv"
-            summary_path = run_dir / "per_shrimp.csv"
+                output = RunOutput(output_root, source_name, fps, save_crops)
+            debug_enabled = bool(debug)
             debug_video_size = None
             all_records = []
             frame_index = 0
             progress_total = min(frame_count, max_frames) if max_frames and frame_count > 0 else (frame_count or None)
-
             with tqdm(total=progress_total, desc="Head/tail tracking", unit="frame", ncols=85) as progress:
                 while max_frames is None or frame_index < max_frames:
                     ok, frame = capture.read()
@@ -466,59 +133,39 @@ class HeadTailShrimpAnalyzer:
                     if frame_index == 0 and not self.monitoring.check_frame(frame, frame_index, fps):
                         skipped_turbid = True
                         break
-                    result = self._detect(frame, tracker, conf, iou)
-                    records, annotated, debug_items = self._process_frame(frame, result, frame_index, fps)
-                    for crop_index, record in enumerate(records):
-                        crop = record.pop("classifier_crop")
-                        if save_crops and not preview_only:
-                            cv2.imwrite(str(crop_dir / f"frame_{frame_index:06d}_{crop_index:02d}_{record['label']}.jpg"), crop)
+                    rows = self._detect(frame, tracker, conf, iou)
+                    records, items = self._process_frame(frame, rows, frame_index, fps)
                     all_records.extend(records)
-                    export_frame = annotated
-                    if debug:
-                        export_debug_view = self._make_debug_view(debug_items, frame_index)
-                        export_frame = combine_preview(annotated, export_debug_view)
-                        if debug_video_size is None:
-                            debug_video_size = make_debug_video_size(export_frame)
-                        export_frame = letterbox(export_frame, debug_video_size)
-                    if writer is None and not preview_only:
-                        height, width = export_frame.shape[:2]
-                        writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-                        if not writer.isOpened():
-                            raise RuntimeError(f"Unable to create result video: {video_path}")
-                    if writer is not None:
-                        writer.write(export_frame)
+                    annotated = visualization.render_frame(frame, records, items, self.monitoring)
+                    if output is not None:
+                        export_frame = annotated
+                        if debug:
+                            export_frame = visualization.combine_preview(annotated, visualization.make_debug_view(items, frame_index))
+                            if debug_video_size is None:
+                                debug_video_size = visualization.debug_video_size(export_frame)
+                            export_frame = visualization.letterbox(export_frame, debug_video_size)
+                        output.write(export_frame, items, frame_index)
                     if preview:
-                        preview_image = annotated
+                        preview_items = preview_smoothing.update(items, time.monotonic())
+                        preview_image = visualization.render_frame(frame, records, preview_items, self.monitoring)
                         if debug_enabled:
-                            debug_view = self._make_debug_view(debug_items, frame_index)
-                            preview_image = combine_preview(annotated, debug_view)
-                        preview_image = fit_preview_to_screen(preview_image)
-                        key = show_preview_or_raise("Head-tail shrimp tracking | D: debug | Q/Esc: quit", preview_image)
+                            preview_image = visualization.combine_preview(preview_image, visualization.make_debug_view(preview_items, frame_index))
+                        preview_image = visualization.fit_preview_to_screen(preview_image)
+                        key = visualization.show_preview_or_raise("Head-tail shrimp tracking | D: debug | Q/Esc: quit", preview_image)
                         if key in {ord("d"), ord("D")}:
                             debug_enabled = not debug_enabled
                         elif key in {ord("q"), 27}:
                             break
                     frame_index += 1
                     progress.update(1)
-
-            summaries = self._summarize(all_records)
             skip_status = {"status": "skipped_turbid", "monitoring_status": "skipped_turbid", "skipped": True} if skipped_turbid else {}
-            if preview_only:
+            if output is None:
                 return {"output_dir": "", "video": "", "detections": "", "per_shrimp": "", **skip_status}
-            write_csv(csv_path, all_records)
-            write_csv(summary_path, summaries)
-            return {
-                "output_dir": str(run_dir),
-                "video": str(video_path) if writer is not None else "",
-                "detections": str(csv_path),
-                "per_shrimp": str(summary_path),
-                **self.monitoring.export(run_dir),
-                **skip_status,
-            }
+            return {**output.finish(all_records, self._summarize(all_records), self.monitoring), **skip_status}
         finally:
             capture.release()
-            if writer is not None:
-                writer.release()
+            if output is not None:
+                output.close()
             if preview:
                 cv2.destroyAllWindows()
 
@@ -545,11 +192,9 @@ class HeadTailShrimpAnalyzer:
             )
         return summaries
 
-    @staticmethod
-    def _write_csv(path: Path, rows: list[dict]) -> None:
-        fieldnames = list(rows[0]) if rows else []
-        with path.open("w", newline="", encoding="utf-8-sig") as file:
-            if fieldnames:
-                writer = csv.DictWriter(file, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(rows)
+
+def __getattr__(name):
+    if name in {"ResNet50FPNClassifier", "ShrimpSexClassifier", "YoloShrimpSexClassifier", "load_sex_classifier"}:
+        from . import sex_classifier
+        return getattr(sex_classifier, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

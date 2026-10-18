@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from general_track.modules import head_tail_pipeline, track_pipeline
+from general_track.modules import head_tail_pipeline
 from shrimp_monitoring import MonitoringSession, summarize_measurements
 
 
@@ -107,9 +107,9 @@ class FakeWriter:
         self.released = True
 
 
-@pytest.fixture(params=["hbb", "head_tail"])
-def pipeline(request, monkeypatch):
-    module = track_pipeline if request.param == "hbb" else head_tail_pipeline
+@pytest.fixture
+def pipeline(monkeypatch):
+    module = head_tail_pipeline
     models = []
 
     class FakeYOLO:
@@ -130,9 +130,6 @@ def pipeline(request, monkeypatch):
             return [SimpleNamespace(boxes=None)]
 
     classifier = SimpleNamespace(predict=lambda crop: ("female", 0.8, 0.2))
-    monkeypatch.setattr(module, "YOLO", FakeYOLO)
-    if request.param == "head_tail":
-        monkeypatch.setattr(module, "load_sex_classifier", lambda path: classifier)
     captures = []
     writers = []
 
@@ -149,15 +146,13 @@ def pipeline(request, monkeypatch):
     monkeypatch.setattr(module.cv2, "VideoCapture", capture_factory)
     monkeypatch.setattr(module.cv2, "VideoWriter", writer_factory)
     monkeypatch.setattr(module.cv2, "destroyAllWindows", lambda: None)
-    monkeypatch.setattr(module, "show_preview_or_raise", lambda *args: 0)
-    monkeypatch.setattr(module, "fit_preview_to_screen", lambda image: image)
+    monkeypatch.setattr(module.visualization, "show_preview_or_raise", lambda *args: 0)
+    monkeypatch.setattr(module.visualization, "fit_preview_to_screen", lambda image: image)
 
     def create(monitoring):
-        if request.param == "hbb":
-            return module.HbbVotingShrimpAnalyzer("new_obb.pt", "new_hbb.pt", window_frames=1, monitoring=monitoring)
-        return module.HeadTailShrimpAnalyzer("new_obb.pt", "new_classifier.pt", monitoring=monitoring)
+        return module.HeadTailShrimpAnalyzer(FakeYOLO("new_obb.pt"), classifier, monitoring=monitoring)
 
-    return SimpleNamespace(kind=request.param, module=module, create=create, models=models, captures=captures, writers=writers)
+    return SimpleNamespace(kind="head_tail", module=module, create=create, models=models, captures=captures, writers=writers)
 
 
 def read_rows(path):
@@ -168,7 +163,7 @@ def read_rows(path):
 def test_clear_water_preserves_tracking_and_attaches_measurements(pipeline, tmp_path):
     monitoring = FakeMonitoring()
     analyzer = pipeline.create(monitoring)
-    kwargs = {"obb_conf": 0.37, "obb_iou": 0.24} if pipeline.kind == "hbb" else {"conf": 0.37, "iou": 0.24}
+    kwargs = {"conf": 0.37, "iou": 0.24}
     paths = analyzer.run("sample.mp4", output_root=str(tmp_path), tracker="custom_tracker.yaml", **kwargs)
 
     assert monitoring.reset_calls == 1
@@ -176,7 +171,7 @@ def test_clear_water_preserves_tracking_and_attaches_measurements(pipeline, tmp_
     assert len(pipeline.models[0].track_calls) == 2
     assert pipeline.models[0].path == "new_obb.pt"
     for call in pipeline.models[0].track_calls:
-        assert call == {"conf": 0.37, "iou": 0.24, "imgsz": pipeline.module.IMGSZ_OBB, "verbose": False, "persist": True, "tracker": "custom_tracker.yaml"}
+        assert call == {"conf": 0.37, "iou": 0.24, "imgsz": 640, "verbose": False, "persist": True, "tracker": "custom_tracker.yaml"}
     assert pipeline.captures[0].released and pipeline.writers[0].released
     assert len(pipeline.writers[0].frames) == 2
     assert len(monitoring.measurements) == len(monitoring.annotations) == 2
@@ -187,7 +182,7 @@ def test_clear_water_preserves_tracking_and_attaches_measurements(pipeline, tmp_
     detections = read_rows(paths["detections"])
     assert [row["raw_tracker_id"] for row in detections] == ["42", "42"]
     assert [row["track_id"] for row in detections] == ["1", "1"]
-    assert [row["label"] for row in detections] == (["F", "F"] if pipeline.kind == "hbb" else ["female", "female"])
+    assert [row["label"] for row in detections] == ["female", "female"]
     assert all(float(row["length_mm"]) == 102.0 and float(row["weight_g"]) == 8.5 for row in detections)
     summary = read_rows(paths["per_shrimp"])[0]
     for key, value in summarize_measurements([MEASUREMENTS, MEASUREMENTS]).items():
@@ -206,11 +201,6 @@ def test_turbid_water_stops_before_inference_without_false_sex_summary(pipeline,
     assert not monitoring.measurements
     assert pipeline.captures[0].released
     assert read_rows(paths["detections"]) == read_rows(paths["per_shrimp"]) == []
-    if pipeline.kind == "hbb":
-        summary = read_rows(paths["window_vote_summary"])[0]
-        assert summary["Final Prediction"] == ""
-        assert summary["Status"] == "skipped_turbid"
-        assert read_rows(paths["video_info"])[0]["Valid Windows"] == "0"
 
 
 def test_preview_only_saves_no_monitoring_or_existing_outputs(pipeline, tmp_path):
@@ -289,3 +279,294 @@ def test_real_monitoring_session_exports_turbid_skip(pipeline, tmp_path):
     assert water["action"] == "stop" and water["water_label"] == "turbid"
     assert Path(paths["monitoring_metadata"]).is_file()
     assert pipeline.captures[0].released
+
+
+
+def test_run_track_loads_obb_and_classifier_only(pipeline, tmp_path):
+    analyzer = pipeline.create(FakeMonitoring())
+    assert [model.path for model in pipeline.models] == ["new_obb.pt"]
+    paths = analyzer.run("sample.mp4", output_root=str(tmp_path), debug=True, save_crops=True)
+    assert read_rows(paths["per_shrimp"])[0]["final_label"] == "female"
+    assert len(list(tmp_path.rglob("classifier_crops/*.jpg"))) == 2
+
+
+def test_general_cli_accepts_config_only():
+    from general_track.run_track import build_parser, DEFAULT_CONFIG
+    args = build_parser().parse_args([])
+    assert args.config == DEFAULT_CONFIG
+    assert build_parser().parse_args(["--config", "job.toml"]).config == Path("job.toml")
+    assert set(vars(args)) == {"config"}
+
+
+def test_run_track_dispatches_to_head_tail_pipeline(monkeypatch):
+    from general_track import run_track
+    calls = {}
+    settings = {"video": "input.mp4", "output_root": "out", "tracker": "bytetrack.yaml", "conf": .4, "iou": .2,
+                "preview": False, "preview_only": False, "debug": False, "save_crops": False,
+                "max_frames": 2, "cnn_threshold": .7}
+
+    class Analyzer:
+        def run(self, **kwargs):
+            calls.update(kwargs)
+            return {"output_dir": "", "skipped": False}
+
+    def load(path):
+        calls["config"] = path
+        return settings
+
+    def create(values):
+        assert values is settings
+        return Analyzer()
+
+    monkeypatch.setattr(run_track, "load_settings", load)
+    monkeypatch.setattr(run_track, "create_analyzer", create)
+    monkeypatch.setattr("sys.argv", ["run_track", "--config", "job.toml"])
+    run_track.main()
+    assert calls["config"] == Path("job.toml")
+    assert calls["conf"] == .4 and calls["iou"] == .2 and calls["max_frames"] == 2
+    assert calls["video"] == "input.mp4"
+
+
+def test_general_exports_are_readable_by_web_worker(pipeline, tmp_path):
+    import importlib.util
+    results_path = Path(__file__).resolve().parents[2] / "web/backend/app/results.py"
+    spec = importlib.util.spec_from_file_location("worker_results", results_path)
+    results = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(results)
+    session = MonitoringSession(estimator=SimpleNamespace(measure=lambda polygon, shape: MEASUREMENTS.copy()))
+    paths = pipeline.create(session).run("sample.mp4", output_root=str(tmp_path))
+    Path(paths["video"]).touch()
+    parsed = results.read_results(Path(paths["output_dir"]))
+    assert parsed["status"] == "completed"
+    assert parsed["tracks"] == [{"track_id": "1", "label": "Female", "observations": 2,
+                                  "length_mm": 102.0, "width_mm": 12.0, "weight_g": 8.5}]
+    assert parsed["avg_length_mm"] == 102.0
+    assert parsed["video"].name == "result.mp4"
+
+
+def test_legacy_worker_mode_uses_renamed_entry():
+    import ast
+    path = Path(__file__).resolve().parents[2] / "web/backend/app/worker.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    modules = next(ast.literal_eval(node.value) for node in tree.body
+                   if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "MODULES" for t in node.targets))
+    assert modules["general"] == modules["head_tail"] == "general_track.run_track"
+
+
+@pytest.mark.parametrize("source", ["head", "tail"])
+def test_retained_head_tail_crop_is_oriented_head_left(source):
+    from general_track.modules.head_tail_common import orient_head_left
+    crop = np.broadcast_to(np.arange(100, dtype=np.uint8)[None, :, None], (30, 100, 3)).copy()
+    head = [(90., 15.)] if source == "head" else []
+    tail = [(10., 15.)] if source == "tail" else []
+    oriented, actual_source = orient_head_left(crop, np.eye(3), head, tail)
+    assert actual_source == source
+    np.testing.assert_array_equal(oriented, cv2.flip(crop, 1))
+
+
+@pytest.mark.parametrize("threshold,label,confidence", [(None, "female", 0.8), (0.1, "male", 0.2),
+                                                         (0.2, "male", 0.2), (0.7, "female", 0.8)])
+def test_cnn_threshold_changes_frame_labels_and_votes(pipeline, tmp_path, threshold, label, confidence):
+    analyzer = pipeline.create(FakeMonitoring())
+    analyzer.cnn_threshold = threshold
+    paths = analyzer.run("sample.mp4", output_root=str(tmp_path), debug=True)
+    detections = read_rows(paths["detections"])
+    assert all(row["label"] == label for row in detections)
+    assert all(float(row["confidence"]) == pytest.approx(confidence) for row in detections)
+    assert all(float(row["male_probability"]) == 0.2 for row in detections)
+    summary = read_rows(paths["per_shrimp"])[0]
+    assert summary["final_label"] == label
+    assert summary[f"{label}_votes"] == "2"
+    if threshold is not None:
+        assert all(float(row["cnn_threshold"]) == threshold for row in detections)
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.1", "nan", "inf"])
+def test_cnn_threshold_rejects_invalid_cli_values(value):
+    from general_track.run_track import build_parser
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--video", "sample.mp4", "--cnn-threshold", value])
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf")])
+def test_cnn_threshold_validated_before_model_loading(threshold):
+    with pytest.raises(ValueError, match="CNN threshold"):
+        head_tail_pipeline.HeadTailShrimpAnalyzer(None, None, cnn_threshold=threshold)
+
+
+@pytest.mark.parametrize("option,value", [("--conf", "nan"), ("--conf", "1.1"), ("--iou", "inf"), ("--iou", "-0.1"), ("--max-frames", "0"), ("--max-frames", "-1")])
+def test_general_cli_rejects_invalid_detection_limits(option, value):
+    from general_track.run_track import build_parser
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(["--video", "sample.mp4", option, value])
+    assert error.value.code == 2
+
+
+def test_preview_smoothing_does_not_change_raw_exports_and_resets_each_run(pipeline, tmp_path, monkeypatch):
+    analyzer = pipeline.create(FakeMonitoring())
+    rendered = []
+
+    def render(frame, records, items, monitoring):
+        rendered.append([(value["label"], "preview_male_probability" in value) for value in items])
+        return frame.copy()
+
+    monkeypatch.setattr(head_tail_pipeline.visualization, "render_frame", render)
+    clock = iter([0.0, 0.5, 0.6, 0.7])
+    monkeypatch.setattr(head_tail_pipeline.time, "monotonic", lambda: next(clock))
+    for labels in (("male", "female"), ("female", "male")):
+        predictions = iter(labels)
+        def predict(crop):
+            label = next(predictions)
+            return label, 0.8, 0.8 if label == "male" else 0.2
+        analyzer.classifier.predict = predict
+        paths = analyzer.run("sample.mp4", output_root=str(tmp_path), preview=True)
+        assert [row["label"] for row in read_rows(paths["detections"])] == list(labels)
+        assert "preview_male_probability" not in read_rows(paths["detections"])[0]
+    assert rendered == [[("male", False)], [("male", True)],
+                        [("female", False)], [("male", True)],
+                        [("female", False)], [("female", True)],
+                        [("male", False)], [("female", True)]]
+
+
+def test_debug_preview_preserves_smoothed_overlay(pipeline, monkeypatch):
+    analyzer = pipeline.create(FakeMonitoring())
+    predictions = iter(("male", "female"))
+    def predict(crop):
+        label = next(predictions)
+        return label, 0.8, 0.8 if label == "male" else 0.2
+    analyzer.classifier.predict = predict
+    clock = iter((0.0, 0.5))
+    monkeypatch.setattr(head_tail_pipeline.time, "monotonic", lambda: next(clock))
+    displayed = []
+    debug_labels = []
+
+    def render(frame, records, items, monitoring):
+        # Distinguish smoothed overlays from the raw export frame at the pixel level.
+        marker = 123 if "preview_male_probability" in items[0] else 45
+        return np.full_like(frame, marker)
+
+    monkeypatch.setattr(head_tail_pipeline.visualization, "render_frame", render)
+    def debug_view(items, frame_index):
+        debug_labels.append([(value["label"], value["raw_label"]) for value in items])
+        return np.zeros((100, 160, 3), dtype=np.uint8)
+
+    monkeypatch.setattr(head_tail_pipeline.visualization, "make_debug_view", debug_view)
+    monkeypatch.setattr(head_tail_pipeline.visualization, "combine_preview", lambda main, debug: main)
+    monkeypatch.setattr(head_tail_pipeline.visualization, "show_preview_or_raise",
+                        lambda name, image: displayed.append(int(image[0, 0, 0])) or 0)
+    analyzer.run("sample.mp4", preview_only=True, debug=True)
+    assert displayed == [123, 123]
+    assert debug_labels == [[("male", "male")], [("male", "female")]]
+
+
+def test_debug_panel_distinguishes_smoothed_probability_from_raw_cnn(pipeline, monkeypatch):
+    from general_track.modules.preview_smoothing import PreviewSmoothing
+    from general_track.modules.obb_track import obb_rows
+
+    analyzer = pipeline.create(FakeMonitoring())
+    frame = np.full((100, 160, 3), 120, dtype=np.uint8)
+    _, items = analyzer._process_frame(frame, obb_rows(obb_prediction()), 0, 25)
+    smoothing = PreviewSmoothing()
+    smoothing.update(items, 0)
+    items[0].update(label="male", confidence=0.9, male_probability=0.9)
+    preview_items = smoothing.update(items, 0.5)
+    texts = []
+    monkeypatch.setattr(head_tail_pipeline.visualization.cv2, "putText",
+                        lambda image, text, *args: texts.append(text) or image)
+    panel = head_tail_pipeline.visualization.make_debug_view(preview_items, 1)
+    assert panel.shape == (180, 480, 3)
+    assert texts == ["1 F | Pm 0.475", "CNN M 0.90"]
+
+
+def test_frame_records_do_not_contain_image_data(pipeline):
+    from general_track.modules.obb_track import obb_rows
+    analyzer = pipeline.create(FakeMonitoring())
+    frame = np.full((100, 160, 3), 120, dtype=np.uint8)
+    records, items = analyzer._process_frame(frame, obb_rows(obb_prediction()), 0, 25)
+    assert records and items
+    assert "classifier_crop" not in records[0]
+    assert not any(isinstance(value, np.ndarray) for value in records[0].values())
+    assert items[0]["classifier_crop"].size > 0
+    np.testing.assert_array_equal(frame, np.full_like(frame, 120))
+
+
+def test_smoothed_main_label_is_kept_inside_frame(pipeline, monkeypatch):
+    from general_track.modules.preview_smoothing import PreviewSmoothing
+    from general_track.modules.obb_track import obb_rows
+
+    analyzer = pipeline.create(FakeMonitoring())
+    frame = np.zeros((100, 160, 3), dtype=np.uint8)
+    records, items = analyzer._process_frame(frame, obb_rows(obb_prediction()), 0, 25)
+    items[0]["polygon"] = np.array([[150, 0], [159, 0], [159, 20], [150, 20]], dtype=np.float32)
+    preview_items = PreviewSmoothing().update(items, 0)
+    texts = []
+    monkeypatch.setattr(head_tail_pipeline.visualization.cv2, "putText",
+                        lambda image, text, anchor, font, scale, color, thickness, line:
+                        texts.append((text, anchor, font, scale, thickness)) or image)
+    head_tail_pipeline.visualization.render_frame(frame, records, preview_items, FakeMonitoring())
+    text, (x, y), font, scale, thickness = texts[0]
+    assert text == "1 F | Pm 0.200"
+    (width, height), baseline = cv2.getTextSize(text, font, scale, thickness)
+    assert x >= 0 and x + width <= frame.shape[1]
+    assert y - height >= 0 and y + baseline <= frame.shape[0]
+
+
+def test_detector_session_and_display_ids_reset_between_runs(pipeline, tmp_path):
+    analyzer = pipeline.create(FakeMonitoring())
+    resets = []
+    analyzer.obb_model.predictor = SimpleNamespace(trackers=[SimpleNamespace(reset=lambda: resets.append(True))])
+    first = analyzer.run("same.mp4", output_root=str(tmp_path))
+    second = analyzer.run("same.mp4", output_root=str(tmp_path))
+    assert len(resets) == 2
+    assert read_rows(first["detections"])[0]["track_id"] == read_rows(second["detections"])[0]["track_id"] == "1"
+    assert first["output_dir"] != second["output_dir"]
+    assert Path(first["detections"]).is_file()
+
+
+def test_max_frames_limits_processing(pipeline, tmp_path):
+    paths = pipeline.create(FakeMonitoring()).run("sample.mp4", output_root=str(tmp_path), max_frames=1)
+    assert len(pipeline.models[0].track_calls) == len(read_rows(paths["detections"])) == 1
+    assert len(pipeline.writers[0].frames) == 1
+
+
+def test_failed_writer_is_released(pipeline, tmp_path, monkeypatch):
+    writer = FakeWriter()
+    writer.isOpened = lambda: False
+    monkeypatch.setattr(pipeline.module.cv2, "VideoWriter", lambda *args: writer)
+    with pytest.raises(RuntimeError, match="Unable to create result video"):
+        pipeline.create(FakeMonitoring()).run("sample.mp4", output_root=str(tmp_path))
+    assert writer.released and pipeline.captures[0].released
+
+
+def test_failed_crop_save_releases_input(pipeline, tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline.module.cv2, "imwrite", lambda *args: False)
+    with pytest.raises(RuntimeError, match="Unable to save classifier crop"):
+        pipeline.create(FakeMonitoring()).run("sample.mp4", output_root=str(tmp_path), save_crops=True)
+    assert pipeline.captures[0].released
+
+
+@pytest.mark.parametrize("key", [ord("q"), 27])
+def test_preview_exit_key_releases_resources(pipeline, tmp_path, monkeypatch, key):
+    monkeypatch.setattr(pipeline.module.visualization, "show_preview_or_raise", lambda *args: key)
+    pipeline.create(FakeMonitoring()).run("sample.mp4", output_root=str(tmp_path), preview=True)
+    assert len(pipeline.models[0].track_calls) == 1
+    assert pipeline.captures[0].released and pipeline.writers[0].released
+
+
+def test_preview_only_debug_toggle_never_writes(pipeline, tmp_path, monkeypatch):
+    keys = iter([ord("d"), ord("q")])
+    panels = []
+    original = pipeline.module.visualization.make_debug_view
+    monkeypatch.setattr(pipeline.module.visualization, "show_preview_or_raise", lambda *args: next(keys))
+    monkeypatch.setattr(pipeline.module.visualization, "make_debug_view", lambda *args: (panels.append(True), original(*args))[1])
+    pipeline.create(FakeMonitoring()).run("sample.mp4", output_root=str(tmp_path), preview_only=True, save_crops=True)
+    assert len(panels) == 1
+    assert not pipeline.writers and not list(tmp_path.iterdir())
+
+
+def test_geometry_and_pipeline_do_not_load_torch_in_fresh_process():
+    import subprocess
+    import sys
+    code = "from general_track.modules import head_tail_common, head_tail_pipeline; import sys; assert 'torch' not in sys.modules; assert 'ultralytics' not in sys.modules"
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr

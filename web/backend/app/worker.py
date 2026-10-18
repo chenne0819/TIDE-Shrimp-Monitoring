@@ -14,12 +14,13 @@ from uuid import uuid4
 import imageio_ffmpeg
 from sqlalchemy import select, update
 from .config import Settings, app_path
+from .analyzer_config import write_job_config
 from .database import Job, Track, Worker, init_database, make_engine, make_session_factory, utcnow
 from .results import read_results
 from .storage import VIDEO_EXTENSIONS, clean_filename, parse_recorded_at, safe_path
 
 LOG = logging.getLogger("tide.worker")
-MODULES = {"general": "general_track.run_track", "head_tail": "general_track.run_head_tail_track", "predict": "predict.run_predict"}
+MODULES = {"general": "general_track.run_track", "head_tail": "general_track.run_track"}
 
 
 class LostLease(RuntimeError):
@@ -142,10 +143,11 @@ class QueueWorker:
                     db.commit()
             self.heartbeat(job_id, 20, force=True)
             output = attempt / "analysis"
-            command = [self.settings.analyzer_python, "-m", MODULES[mode], "--video", source,
-                       "--output-root", output, "--monitoring", "--water-policy", water_policy]
-            if max_frames:
-                command += ["--max-frames", str(max_frames)]
+            config_path = write_job_config(
+                self.settings.analyzer_root, source, output, attempt / "analyzer.toml",
+                water_policy=water_policy, max_frames=max_frames,
+            )
+            command = [self.settings.analyzer_python, "-m", MODULES[mode], "--config", config_path]
             self.command(command, job_id, attempt / "analyzer.log", cwd=self.settings.analyzer_root)
             self.heartbeat(job_id, 85, force=True)
             result = read_results(output)

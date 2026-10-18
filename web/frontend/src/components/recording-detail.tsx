@@ -211,7 +211,7 @@ export function RecordingDetail({ id, demo }: { id: string; demo: boolean }) {
                     ? "頭尾追蹤"
                     : current.mode === "predict"
                       ? "單幀分析"
-                      : "一般個體追蹤"}
+                      : "個體追蹤"}
                 </span>
               </div>
             </div>
@@ -363,11 +363,11 @@ export function RecordingDetail({ id, demo }: { id: string; demo: boolean }) {
                           <tr key={track.track_id}>
                             <td className="mono">#{track.track_id}</td>
                             <td>
-                              {track.label === "Male"
-                                ? "公蝦"
-                                : track.label === "Female"
-                                  ? "母蝦"
-                                  : "未判定"}
+                              {track.label === "Male" || track.label === "Female" ? (
+                                <span className={`sex-label sex-${track.label.toLowerCase()}`}>
+                                  {track.label.toLowerCase()}
+                                </span>
+                              ) : "未判定"}
                             </td>
                             <td>{track.observations}</td>
                             <td>{formatNumber(track.length_mm)}</td>

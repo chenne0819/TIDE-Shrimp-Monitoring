@@ -16,11 +16,11 @@ TIDE-Shrimp-Monitoring/
 └── web/        # Next.js frontend, FastAPI API/worker, PostgreSQL and AI assistant
 ```
 
-These are two parts of the same system. `tracking/` can also run independently from Python. The web worker calls that engine through its existing command-line interface; inference is not performed inside an HTTP request.
+These are two parts of the same system. `tracking/` runs independently from Python. The web architecture delegates inference to a separate worker, outside HTTP requests. The worker creates a separate TOML configuration for each job and invokes the tracking entry with `--config`; see [tracking usage](tracking/general_track/README.md#outputs-and-external-callers).
 
 | Component | Included features | Documentation |
 | --- | --- | --- |
-| Tracking engine | Newer YOLO OBB/HBB detection, tracking IDs, head/tail processing and sex classification; integrated first-frame water classification, calibrated length/width estimates and weight regression | [Tracking setup and models](tracking/README.md) |
+| Tracking engine | YOLO OBB detection and tracking IDs, head/tail crop orientation and CNN/classifier-based sex classification; integrated first-frame water classification, calibrated length/width estimates and weight regression | [Tracking setup and models](tracking/README.md) |
 | Monitoring outputs | Annotated video, per-ID summaries, CSV measurements, water classification and calibration metadata | [Integration guide](tracking/docs/monitoring-integration.md) |
 | Web application | Video upload/inbox, background jobs, playback, date/pond filters, length/width/weight distributions and CSV export | [Web setup](web/README.md) |
 | AI analysis | Natural-language questions, follow-up context, ten chart templates, descriptive statistics, Pearson/Spearman correlation, Welch t-test and Welch ANOVA | [AI analysis guide](web/docs/ai-analysis.md) |
@@ -37,12 +37,12 @@ The upstream Git history is retained. The [original upstream README](tracking/do
 
 ## Getting started
 
-Requirements: Git (and Git LFS for inherited upstream LFS assets), Python 3.12, Node.js 22 or later, PostgreSQL, and compatible inference weights. A GPU is optional and requires a compatible PyTorch/CUDA installation.
+Requirements: Git (and Git LFS for inherited upstream LFS assets), Python 3.14 for tracking in the repository-root `.venv`, Node.js 22 or later, PostgreSQL, and compatible inference weights. The tracking requirements target an NVIDIA GPU with CUDA 12.6 PyTorch wheels; verify GPU execution with `tracking/check-gpu.py`.
 
 1. Clone this repository. Prepare the tracking environment and the required model files using [tracking/README.md](tracking/README.md). The optional Windows helper is `tracking/setup-monitoring.ps1`.
 2. Configure the web environment following [web/README.md](web/README.md): create `web/.venv`, install the backend requirements, run `npm ci` in `web/frontend`, and copy `web/.env.example` to `web/.env`.
 3. Choose your own PostgreSQL password and set `DATABASE_URL` and `POSTGRES_PASSWORD` consistently. `web/compose.yaml` can start a database bound to localhost. Do not deploy the example password.
-4. Keep `ANALYZER_ROOT=../tracking` in `web/.env`. Paths resolve from `web/`, independently of the shell working directory. Leave `ANALYZER_PYTHON` empty to use the separate environment in `tracking/.venv`, or explicitly configure the inference Python executable.
+4. Keep `ANALYZER_ROOT=../tracking` in `web/.env`. Paths resolve from `web/`, independently of the shell working directory. Explicitly set `ANALYZER_PYTHON=../.venv/Scripts/python.exe` on Windows (or `../.venv/bin/python` on Linux) to use the repository-root tracking environment. The old `tracking/.venv` is no longer used.
 5. Start the API, background worker and frontend in separate terminals. On Windows, run the following from `web/`:
 
 ```powershell
@@ -56,18 +56,20 @@ Requirements: Git (and Git LFS for inherited upstream LFS assets), Python 3.12, 
 .\scripts\start-local.ps1 -Service web
 ```
 
-Open [the web workspace](http://127.0.0.1:3000/dashboard), [the upload page](http://127.0.0.1:3000/upload), or [the API documentation](http://127.0.0.1:8000/docs). The [explicit demo](http://127.0.0.1:3000/dashboard?demo=1) uses synthetic measurements and does not include private recordings or extracted thumbnails. Real analysis requires the models and a running worker.
+Open [the web workspace](http://127.0.0.1:3000/dashboard), [the upload page](http://127.0.0.1:3000/upload), or [the API documentation](http://127.0.0.1:8000/docs). The [explicit demo](http://127.0.0.1:3000/dashboard?demo=1) uses synthetic measurements and does not include private recordings or extracted thumbnails. Standalone tracking and web video jobs use the same TOML entry. Real analysis requires compatible model assets and a running worker.
 
 AI is disabled by default. The `codex` provider uses an existing local Codex login for trusted local testing; the `openai` provider uses the official OpenAI Responses SDK and a separate server-side API key. See [AI configuration](web/docs/ai-analysis.md). No account session or API key is supplied by this repository.
 
 ## Models and measurement limits
 
-- The four `.pkl` regression models and water-classification `.pth` checkpoint are included as ordinary Git files. They are used by `--monitoring`; the web worker enables this option automatically. The regression environment uses `scikit-learn==1.6.1`.
+- The four `.pkl` regression models and water-classification `.pth` checkpoint are included as ordinary Git files. Enable `biometrics` and `water_quality` independently in TOML. The tracking runtime uses Python 3.14 and `scikit-learn==1.9.1`; the original regressors were saved with 1.6.1, as retained in their provenance.
 - The selected mode's trained YOLO detector and sex-classification weights must still be obtained separately using the documented `tracking/model/` layout. Inherited upstream LFS entries do not supply that private bundle. Original measurement spreadsheets and training datasets are not included.
 - Water results describe image appearance (`clear` / `turbid`) from the first frame. They are not pH, dissolved oxygen or a complete water-quality measurement.
 - Width is an OBB short-edge proxy; length and weight are model estimates. The inherited reference is 800 × 450 at 2.5 pixels/mm. Recalibrate after changing the camera, distance, framing or geometry; resizing alone does not establish a physical scale.
-- General tracking, head/tail tracking and single-frame analysis are available. The optional temporal multi-channel mode still needs a compatible nine-channel HBB checkpoint.
+- The `run_track` entry retains head/tail tracking and classifier-based sex classification.
+- Tracking settings now use `tracking/general_track/config.toml`; the entry accepts only `--config` and `--help`. The web worker derives job configurations from that template, enables both monitoring models and saves results without opening a preview window.
 - Tracking IDs are local to a video. Comparisons across videos or dates do not establish the growth of the same individual shrimp.
+- Preview EMA changes only display labels. The [EMA tuning summary](tracking/docs/ema-threshold-results.md) records the six-video experiment; its candidate threshold was not applied to the live configuration.
 
 ## Privacy and deployment
 

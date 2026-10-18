@@ -1,6 +1,6 @@
 # FastAPI and the video worker
 
-Run these commands from **`web/backend/`**, using `web/.venv`. Inference uses the separate analyzer environment under `tracking/`.
+Run these commands from **`web/backend/`**, using `web/.venv`. Tracking uses Python 3.14 in the repository-root `.venv`. The worker derives a per-job TOML from `tracking/general_track/config.toml`, enables water and biometric monitoring, and invokes the analyzer with `--config`. Compatible OBB/CNN weights must be supplied separately.
 
 ```powershell
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
@@ -16,7 +16,7 @@ On macOS/Linux use `../.venv/bin/python`. Interactive API docs are at `http://12
 
 The application loads `web/.env` regardless of working directory. `DATABASE_URL` is required, using `postgresql+psycopg://...`; missing configuration fails explicitly. URL-encode reserved characters such as `@` in its password.
 
-Relative settings resolve from **`web/`**: `STORAGE_ROOT=storage`, `ANALYZER_ROOT=../tracking`. An empty `ANALYZER_PYTHON` selects `tracking/.venv/Scripts/python.exe` or `tracking/.venv/bin/python`.
+Relative settings resolve from **`web/`**: `STORAGE_ROOT=storage`, `ANALYZER_ROOT=../tracking`. Explicitly set `ANALYZER_PYTHON=../.venv/Scripts/python.exe` on Windows (`../.venv/bin/python` on Linux). The old `tracking/.venv` no longer exists; the current empty-value fallback otherwise uses the backend interpreter and does not discover the repository-root tracking environment. Selecting the right interpreter does not fix the worker's legacy CLI arguments.
 
 `CORS_ORIGINS` is a comma-separated list of complete frontend origins. `TRUSTED_HOSTS` contains API hostnames without scheme/port, defaulting to `localhost,127.0.0.1`. `MAX_UPLOAD_BYTES` defaults to 2 GiB and is enforced during parsing, with an additional bounded form-data allowance for the total body. Defaults: `ANALYZER_TIMEOUT_SECONDS=86400`, `WORKER_LEASE_SECONDS=180` (minimum 30), `WORKER_POLL_SECONDS=3`. API and worker must share access to storage and the analyzer environment.
 
@@ -33,7 +33,7 @@ curl.exe -H "X-Tide-CSRF: $($TideSession.csrf_token)" -F "file=@sample.mp4" -F "
 
 No private sample footage/still is distributed. Python clients can GET the session, then pass `headers={"X-Tide-CSRF": token}` on POST. In Swagger, call session first and paste the token into Authorize.
 
-Modes are `general`, `head_tail`, `predict`. Omit `max_frames` for the full video; `max_frames=8` is a test limit. `recorded_at` accepts a Taipei date or timezone-qualified ISO datetime. `water_policy=report` records classification and continues; `stop` produces `stopped` when the first frame is turbid.
+Modes are `general` and the compatibility alias `head_tail`. General mode runs head/tail OBB tracking, classifier-based sex classification and measurements through `general_track.run_track`. The legacy `head_tail` mode invokes the same entry for compatibility. Omit `max_frames` for the full video; `max_frames=8` is a test limit. `recorded_at` accepts a Taipei date or timezone-qualified ISO datetime. `water_policy=report` records classification and continues; `stop` produces `stopped` when the first frame is turbid.
 
 The API returns 202 with a job ID; the worker claims it separately. Read `GET /api/jobs/{id}` or `GET /api/overview?start_date=2026-09-20&end_date=2026-09-20&pond=A-01`. Date bounds include the full Taipei day. Empty averages are `null`, never fabricated values.
 

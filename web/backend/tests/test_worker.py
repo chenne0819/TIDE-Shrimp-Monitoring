@@ -1,5 +1,7 @@
 from datetime import timedelta
 import json
+from pathlib import Path
+import tomllib
 from uuid import uuid4
 
 import pytest
@@ -57,11 +59,11 @@ def test_worker_failure_is_persisted(settings, monkeypatch):
     worker.close()
 
 
-@pytest.mark.parametrize("predict", [False, True])
-def test_import_actual_export_schemas_and_nulls(tmp_path, predict):
+@pytest.mark.parametrize("legacy_summary", [False, True])
+def test_import_current_and_historical_export_schemas_and_nulls(tmp_path, legacy_summary):
     (tmp_path / "monitoring.json").write_text(json.dumps({"status": "completed", "water_model": "C:/private/model.pth"}))
     (tmp_path / "water_quality.csv").write_text("water_label,water_confidence\nturbid,0.95\n")
-    if predict:
+    if legacy_summary:
         name = "per_shrimp_summary.csv"
         header = "Shrimp_ID,Final_Label,Total_Seen,mean_length_mm,mean_width_mm,mean_weight_g\n"
     else:
@@ -119,3 +121,89 @@ def test_inbox_bad_metadata_does_not_queue(settings, tmp_path):
     with worker.sessions() as db:
         assert db.query(Job).count() == 0
     worker.close()
+
+
+@pytest.mark.parametrize("mode", ["general", "head_tail"])
+@pytest.mark.parametrize("limit,policy", [(None, "report"), (4, "stop")])
+def test_worker_passes_job_toml_and_imports_measurements(settings, monkeypatch, mode, limit, policy):
+    template = settings.analyzer_root / "general_track/config.toml"
+    template.parent.mkdir()
+    template.write_text('''obb_model = "../model/obb.pt"
+classifier_model = "../model/cnn.pt"
+water_model = "../model/water.pth"
+biometrics_model_dir = "../model/biometrics"
+tracker = "bytetrack.yaml"
+max_frames = 1
+preview_only = true
+water_quality = false
+biometrics = false
+pixels_per_mm = 2.5
+measurement_reference_size = [800, 450]
+''', encoding="utf-8")
+    original = template.read_bytes()
+    worker = QueueWorker(settings)
+    try:
+        job_id = queued(worker, settings)
+        with worker.sessions() as db:
+            job = db.get(Job, job_id)
+            job.mode, job.max_frames, job.water_policy = mode, limit, policy
+            job.source_browser_path = job.source_path
+            db.commit()
+        assert worker.claim() == job_id
+        calls = []
+
+        def command(command, current_id, log_path, cwd=None):
+            calls.append(command)
+            assert current_id == job_id and cwd == settings.analyzer_root
+            assert command[1:4] == ["-m", "general_track.run_track", "--config"]
+            assert len(command) == 5
+            with Path(command[4]).open("rb") as file:
+                config = tomllib.load(file)
+            assert config["water_quality"] and config["biometrics"]
+            assert not any(config[name] for name in ("preview", "preview_only", "debug", "save_crops"))
+            assert config["water_policy"] == policy and config.get("max_frames") == limit
+            assert Path(config["obb_model"]) == settings.analyzer_root / "model/obb.pt"
+            assert config["tracker"] == "bytetrack.yaml"
+            assert config["measurement_reference_size"] == [800, 450]
+            assert Path(config["video"]).is_file()
+            output = Path(config["output_root"])
+            assert output.is_relative_to(settings.storage_root / "jobs" / job_id)
+            output.mkdir()
+            (output / "monitoring.json").write_text('{"status":"completed","biometrics_enabled":true}')
+            (output / "per_shrimp.csv").write_text(
+                "track_id,final_label,observations,mean_length_mm,mean_width_mm,mean_weight_g\n1,male,4,120,18,12\n")
+            (output / "water_quality.csv").write_text("water_label,water_confidence\nclear,0.96\n")
+            (output / "result.mp4").write_bytes(b"result")
+
+        def transcode(source, destination, *args):
+            destination.write_bytes(source.read_bytes())
+            return 4
+
+        monkeypatch.setattr(worker, "command", command)
+        monkeypatch.setattr(worker, "transcode", transcode)
+        worker.process(job_id)
+        with worker.sessions() as db:
+            job = db.get(Job, job_id)
+            assert job.status == "completed" and job.processed_frames == 4
+            assert job.water_label == "clear" and job.shrimp_count == 1
+            assert (job.avg_length_mm, job.avg_width_mm, job.avg_weight_g) == (120, 18, 12)
+            assert job.tracks[0].label == "Male"
+        assert len(calls) == 1 and template.read_bytes() == original
+    finally:
+        worker.close()
+
+
+def test_default_analyzer_python_prefers_repository_root_env(tmp_path, monkeypatch):
+    from app.config import Settings
+    analyzer = tmp_path / "tracking"
+    root_python = tmp_path / ".venv/Scripts/python.exe"
+    legacy_python = analyzer / ".venv/Scripts/python.exe"
+    for path in (root_python, legacy_python):
+        path.parent.mkdir(parents=True)
+        path.touch()
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("ANALYZER_ROOT", str(analyzer))
+    monkeypatch.delenv("ANALYZER_PYTHON", raising=False)
+    assert Settings.from_env().analyzer_python == root_python
+    monkeypatch.setenv("ANALYZER_PYTHON", str(legacy_python))
+    assert Settings.from_env().analyzer_python == legacy_python

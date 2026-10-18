@@ -1,5 +1,22 @@
 {
   "detector_source": "User-provided model bundle (model/yolo and model/cnn)",
+  "inventory_note": "detector_assets is a historical bundle inventory, not a list of current requirements. Historical HBB checkpoints are unused by the current OBB/head-tail/CNN entry.",
+  "current_entry": {
+    "module": "general_track.run_track",
+    "config": "general_track/config.toml (relative to tracking/)",
+    "asset_paths_relative_to": "tracking/model/",
+    "required_unpublished_default_assets": [
+      "yolo/best-obb-yolo11m-head_tail.pt",
+      "cnn/best_resnet50-run3.pt"
+    ],
+    "included_optional_monitoring_assets": [
+      "water/logistic_regression_model.pth",
+      "biometrics/final_linear_model_length.pkl",
+      "biometrics/final_linear_model_width.pkl",
+      "biometrics/polynomial_regression_model_degree3.pkl",
+      "biometrics/multi_feature_model.pkl"
+    ]
+  },
   "detector_assets": [
     {
       "file": "cnn/best_resnet18-run3.pt",

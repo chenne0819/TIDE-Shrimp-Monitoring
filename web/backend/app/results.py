@@ -42,7 +42,7 @@ def read_results(root: Path):
     metadata["measurement_note"] = "沿用原攝影校正；長度、重量為估計值，寬度為 OBB 代理值，需驗證新攝影條件。"
     tracks_path = find_one(root, ("per_shrimp.csv", "per_shrimp_summary.csv"))
     water_path = find_one(root, ("water_quality.csv",))
-    summary_path = find_one(root, ("bucket_summary.csv",))
+    summary_path = find_one(root, ("bucket_summary.csv", "video_info.csv"))
     detections_path = find_one(root, ("detections.csv",))
     stopped = metadata.get("status") == "skipped_turbid"
     if tracks_path is None and not stopped:

@@ -3161,3 +3161,13 @@ progress::-moz-progress-bar {
     font-size: 12px;
   }
 }
+
+.sex-label {
+  font-weight: 600;
+}
+.sex-male {
+  color: #2563eb;
+}
+.sex-female {
+  color: #16a34a;
+}

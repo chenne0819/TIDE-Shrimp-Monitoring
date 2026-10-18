@@ -82,3 +82,6 @@ web/docs/publication-*.md
 web/docs/ui-refinement-*.md
 web/docs/landing-image-prompts.md
 web/docs/assets/
+
+dataset/
+dataset.7z

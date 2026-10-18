@@ -1,8 +1,0 @@
-# No machine-specific "path": Ultralytics uses this YAML file's directory.
-train: shrimp_OBB_dataset/train/images
-val: shrimp_OBB_dataset/val/images
-test: shrimp_OBB_dataset/test/images
-
-nc: 1
-names:
-  0: shrimp
