@@ -69,7 +69,7 @@ AI is disabled by default. The `codex` provider uses an existing local Codex log
 - The `run_track` entry retains head/tail tracking and classifier-based sex classification.
 - Tracking settings now use `tracking/general_track/config.toml`; the entry accepts only `--config` and `--help`. The web worker derives job configurations from that template, enables both monitoring models and saves results without opening a preview window.
 - Tracking IDs are local to a video. Comparisons across videos or dates do not establish the growth of the same individual shrimp.
-- Preview EMA changes only display labels. The [EMA tuning summary](tracking/docs/ema-threshold-results.md) records the six-video experiment; its candidate threshold was not applied to the live configuration.
+- EMA stabilizes preview labels and new web result videos. Web video smoothing uses video time and leaves raw CSV predictions, measurements and final majority voting unchanged. Existing completed videos need a new analysis to show the effect. Standalone exports opt in with `smooth_video = true`. The [EMA tuning summary](tracking/docs/ema-threshold-results.md) records the six-video experiment; its candidate threshold was not applied to the live configuration.
 
 ## Privacy and deployment
 

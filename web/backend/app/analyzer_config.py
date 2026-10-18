@@ -28,7 +28,7 @@ def write_job_config(analyzer_root: Path, source: Path, output: Path, destinatio
         settings[name] = str((path if path.is_absolute() else template.parent / path).resolve())
     settings.update(video=str(source.resolve()), output_root=str(output.resolve()),
                     water_quality=True, biometrics=True, water_policy=water_policy,
-                    preview=False, preview_only=False, debug=False, save_crops=False)
+                    preview=False, preview_only=False, debug=False, save_crops=False, smooth_video=True)
     settings.pop("max_frames", None)
     if max_frames is not None:
         settings["max_frames"] = max_frames

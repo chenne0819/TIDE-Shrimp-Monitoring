@@ -135,6 +135,7 @@ biometrics_model_dir = "../model/biometrics"
 tracker = "bytetrack.yaml"
 max_frames = 1
 preview_only = true
+smooth_video = false
 water_quality = false
 biometrics = false
 pixels_per_mm = 2.5
@@ -160,6 +161,7 @@ measurement_reference_size = [800, 450]
             with Path(command[4]).open("rb") as file:
                 config = tomllib.load(file)
             assert config["water_quality"] and config["biometrics"]
+            assert config["smooth_video"] is True
             assert not any(config[name] for name in ("preview", "preview_only", "debug", "save_crops"))
             assert config["water_policy"] == policy and config.get("max_frames") == limit
             assert Path(config["obb_model"]) == settings.analyzer_root / "model/obb.pt"

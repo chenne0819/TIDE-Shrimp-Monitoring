@@ -1,4 +1,4 @@
-"""Time-aware probability smoothing for preview only; raw predictions stay intact."""
+"""Time-aware display smoothing for preview and video; raw predictions stay intact."""
 from dataclasses import dataclass
 import math
 

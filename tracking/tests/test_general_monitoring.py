@@ -303,7 +303,7 @@ def test_run_track_dispatches_to_head_tail_pipeline(monkeypatch):
     calls = {}
     settings = {"video": "input.mp4", "output_root": "out", "tracker": "bytetrack.yaml", "conf": .4, "iou": .2,
                 "preview": False, "preview_only": False, "debug": False, "save_crops": False,
-                "max_frames": 2, "cnn_threshold": .7}
+                "max_frames": 2, "cnn_threshold": .7, "smooth_video": True}
 
     class Analyzer:
         def run(self, **kwargs):
@@ -325,6 +325,7 @@ def test_run_track_dispatches_to_head_tail_pipeline(monkeypatch):
     assert calls["config"] == Path("job.toml")
     assert calls["conf"] == .4 and calls["iou"] == .2 and calls["max_frames"] == 2
     assert calls["video"] == "input.mp4"
+    assert calls["smooth_video"] is True
 
 
 def test_general_exports_are_readable_by_web_worker(pipeline, tmp_path):
@@ -426,6 +427,96 @@ def test_preview_smoothing_does_not_change_raw_exports_and_resets_each_run(pipel
                         [("female", False)], [("male", True)],
                         [("female", False)], [("female", True)],
                         [("male", False)], [("female", True)]]
+
+
+@pytest.mark.parametrize("fps", [10, 25])
+@pytest.mark.parametrize("debug", [False, True])
+def test_saved_video_smooths_on_video_time_without_changing_exports(pipeline, tmp_path, monkeypatch, fps, debug):
+    count = 2 * fps + 1
+    capture = FakeCapture(count)
+    capture.get = lambda key: fps if key == cv2.CAP_PROP_FPS else count
+    monkeypatch.setattr(head_tail_pipeline.cv2, "VideoCapture", lambda source: capture)
+    # Headless output must not depend on processing speed or require a GUI.
+    def unexpected(*args):
+        pytest.fail("Saved-video smoothing must use video time without opening a preview")
+    monkeypatch.setattr(head_tail_pipeline, "time", SimpleNamespace(monotonic=unexpected))
+    monkeypatch.setattr(head_tail_pipeline.visualization, "show_preview_or_raise", unexpected)
+    analyzer = pipeline.create(FakeMonitoring())
+    probabilities = iter([0.1] + [0.9] * (count - 1))
+    def predict(crop):
+        p = next(probabilities)
+        return ("male" if p >= .5 else "female"), .9, p
+    analyzer.classifier.predict = predict
+    rendered, panels = [], []
+    original_render = head_tail_pipeline.visualization.render_frame
+    original_debug = head_tail_pipeline.visualization.make_debug_view
+    def render(frame, records, items, monitoring):
+        rendered.append(items[0].copy())
+        return original_render(frame, records, items, monitoring)
+    def debug_view(items, index):
+        panels.append(items[0].copy())
+        return original_debug(items, index)
+    monkeypatch.setattr(head_tail_pipeline.visualization, "render_frame", render)
+    monkeypatch.setattr(head_tail_pipeline.visualization, "make_debug_view", debug_view)
+    paths = analyzer.run("sample.mp4", output_root=str(tmp_path), smooth_video=True, debug=debug)
+
+    assert len(pipeline.writers[0].frames) == count
+    assert capture.released and pipeline.writers[0].released
+    assert rendered[0]["label"] == rendered[fps]["label"] == "female"
+    assert rendered[-1]["label"] == "male"  # sustained evidence eventually switches
+    assert rendered[fps]["preview_male_probability"] == pytest.approx(.1 + (1 - np.exp(-1)) * .8)
+    assert rendered[1]["raw_label"] == "male"
+    if debug:
+        assert [item["label"] for item in panels] == [item["label"] for item in rendered]
+        assert panels[1]["raw_label"] == "male"
+    detections = read_rows(paths["detections"])
+    assert [row["label"] for row in detections] == ["female"] + ["male"] * (count - 1)
+    assert all("preview_male_probability" not in row and "raw_label" not in row for row in detections)
+    assert float(detections[1]["male_probability"]) == .9
+    summary = read_rows(paths["per_shrimp"])[0]
+    assert summary["final_label"] == "male" and int(summary["male_votes"]) == count - 1
+    assert float(summary["mean_length_mm"]) == MEASUREMENTS["length_mm"]
+
+
+def test_video_smoothing_resets_and_keeps_crop_labels_raw(pipeline, tmp_path, monkeypatch):
+    analyzer = pipeline.create(FakeMonitoring())
+    labels, crop_paths = [], []
+    original = head_tail_pipeline.visualization.render_frame
+    def render(frame, records, items, monitoring):
+        labels.append(items[0]["label"])
+        return original(frame, records, items, monitoring)
+    monkeypatch.setattr(head_tail_pipeline.visualization, "render_frame", render)
+    monkeypatch.setattr(head_tail_pipeline.cv2, "imwrite", lambda path, image: crop_paths.append(Path(path).name) or True)
+    for probabilities in ((.9, .1), (.1, .9)):
+        predictions = iter(probabilities)
+        def predict(crop):
+            p = next(predictions)
+            return ("male" if p >= .5 else "female"), .9, p
+        analyzer.classifier.predict = predict
+        analyzer.run("sample.mp4", output_root=str(tmp_path), smooth_video=True, save_crops=True)
+    assert labels == ["male", "male", "female", "female"]
+    assert crop_paths == ["frame_000000_00_male.jpg", "frame_000001_00_female.jpg",
+                          "frame_000000_00_female.jpg", "frame_000001_00_male.jpg"]
+
+
+def test_saved_video_and_live_preview_have_independent_clocks(pipeline, tmp_path, monkeypatch):
+    analyzer = pipeline.create(FakeMonitoring())
+    probabilities = iter((.1, .9))
+    def predict(crop):
+        p = next(probabilities)
+        return ("male" if p >= .5 else "female"), .9, p
+    analyzer.classifier.predict = predict
+    clock = iter((20., 20.5))
+    monkeypatch.setattr(head_tail_pipeline, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    scores = []
+    original = head_tail_pipeline.visualization.render_frame
+    def render(frame, records, items, monitoring):
+        scores.append(items[0]["preview_male_probability"])
+        return original(frame, records, items, monitoring)
+    monkeypatch.setattr(head_tail_pipeline.visualization, "render_frame", render)
+    analyzer.run("sample.mp4", output_root=str(tmp_path), smooth_video=True, preview=True)
+    assert scores == pytest.approx([.1, .1, .1 + (1 - np.exp(-1 / 25)) * .8,
+                                   .1 + (1 - np.exp(-.5)) * .8])
 
 
 def test_debug_preview_preserves_smoothed_overlay(pipeline, monkeypatch):

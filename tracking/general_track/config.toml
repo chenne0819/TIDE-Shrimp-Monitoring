@@ -70,6 +70,10 @@ preview = false
 # 此模式優先於 preview 與 save_crops 的儲存行為。
 preview_only = true
 
+# 儲存影片也套用公母標籤 EMA 平滑，以影片時間計算；不影響 CSV 與最終多數決。
+# 網頁工作會自動啟用；獨立執行預設關閉。preview_only = true 時仍不儲存影片。
+smooth_video = false
+
 # 啟動時顯示分類裁切 debug 面板；儲存的結果影片也包含面板。
 # 預覽可按 D 切換面板；此按鍵不改變已設定的影片輸出樣式。
 debug = true

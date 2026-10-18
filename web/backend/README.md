@@ -39,6 +39,8 @@ The API returns 202 with a job ID; the worker claims it separately. Read `GET /a
 
 Dashboard measurements use each video's per-ID aggregate, preventing IDs seen in more frames from receiving extra weight. IDs do not link individuals across recordings. Prediction mode retains the analyzer's paired IDs. Width is an OBB proxy; inherited camera/regression calibration still requires validation. AI inferential methods additionally offer/require video means as documented in [statistical methods](../docs/statistical-methods.md).
 
+The worker enables `smooth_video = true` for every job. Result-video sex labels/colors use EMA and one-second switch confirmation on the video's timeline, without opening a desktop preview. Raw CSV predictions, measurements and final per-ID majority voting remain unchanged. Existing completed videos require a new analysis to receive smoothed overlays.
+
 The worker transcodes source/result videos to H.264/yuv420p MP4 and creates JPEG thumbnails. Playback URLs appear only when ready. Video endpoints support one HTTP Range and HEAD. Allowlisted CSV/JSON exports are downloadable; execution logs are not public. Transcoding removes audio.
 
 ## Inbox delivery

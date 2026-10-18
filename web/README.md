@@ -18,7 +18,7 @@ TIDE-Shrimp-Monitoring/
     compose.yaml        # Dedicated PostgreSQL service
 ```
 
-The web architecture delegates inference to the analyzer under `tracking/`. The worker creates a job-specific TOML from `tracking/general_track/config.toml` and calls the analyzer with `--config`. Each job enables both water and biometric monitoring and saves results with desktop preview disabled. Standalone tracking supports the included four regressors and water checkpoint; OBB/CNN weights must be supplied separately as described in the [tracking setup](../tracking/README.md).
+The web architecture delegates inference to the analyzer under `tracking/`. The worker creates a job-specific TOML from `tracking/general_track/config.toml` and calls the analyzer with `--config`. Each job enables both water and biometric monitoring and saves results with desktop preview disabled. Result videos automatically use EMA-smoothed sex labels and colors, calculated on video time, plus the smoothed male probability (`Pm`). CSV and final per-ID majority voting retain the raw predictions, so a displayed label can differ from the final table. Existing completed videos are unchanged; submit a new analysis to generate a smoothed result. Standalone tracking supports the included four regressors and water checkpoint; OBB/CNN weights must be supplied separately as described in the [tracking setup](../tracking/README.md).
 
 ## Using the application
 
@@ -218,7 +218,7 @@ The entry accepts only `--config` and `--help`. Editing this standalone config d
 
 ### 3. Web or inbox jobs
 
-Edit the model and calibration fields in `tracking/general_track/config.toml`. The worker reads that template when a job starts, so subsequent jobs use the updated values without changing the shared file. It resolves relative asset paths against the template directory and writes the uploaded input, job output, frame limit and selected water policy into a private per-attempt `analyzer.toml`. Water classification and biometrics are enabled; preview, preview-only, debug panels and crop saving are disabled. A template frame limit is replaced by the job limit, or removed when the full video was requested. Multiple camera calibrations still require an explicit per-job configuration design.
+Edit the model and calibration fields in `tracking/general_track/config.toml`. The worker reads that template when a job starts, so subsequent jobs use the updated values without changing the shared file. It resolves relative asset paths against the template directory and writes the uploaded input, job output, frame limit and selected water policy into a private per-attempt `analyzer.toml`. Water classification, biometrics and `smooth_video` are enabled; preview, preview-only, debug panels and crop saving are disabled. A template frame limit is replaced by the job limit, or removed when the full video was requested. Multiple camera calibrations still require an explicit per-job configuration design.
 
 ### 4. Replacement regression weights
 

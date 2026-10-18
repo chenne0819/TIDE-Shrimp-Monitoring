@@ -12,7 +12,9 @@ def load_settings(config_path=DEFAULT_CONFIG):
     path = Path(config_path).expanduser().resolve()
     with path.open("rb") as file:
         settings = tomllib.load(file)
-    booleans = {"water_quality", "biometrics", "preview", "preview_only", "debug", "save_crops"}
+    # Existing standalone configurations retain their raw-video behavior.
+    settings.setdefault("smooth_video", False)
+    booleans = {"water_quality", "biometrics", "preview", "preview_only", "debug", "save_crops", "smooth_video"}
     required = booleans | {"video", "obb_model", "classifier_model", "tracker", "imgsz", "conf", "iou",
                            "water_policy", "pixels_per_mm", "measurement_reference_size", "weight_mode", "output_root"}
     allowed = required | {"cnn_threshold", "max_frames", "water_model", "biometrics_model_dir"}
@@ -114,7 +116,7 @@ def main():
     try:
         settings = load_settings(args.config)
         analyzer = create_analyzer(settings)
-        keys = ("video", "output_root", "tracker", "conf", "iou", "preview", "preview_only", "debug", "save_crops")
+        keys = ("video", "output_root", "tracker", "conf", "iou", "preview", "preview_only", "debug", "save_crops", "smooth_video")
         paths = analyzer.run(**{key: settings[key] for key in keys}, max_frames=settings.get("max_frames"))
     except (OSError, RuntimeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)

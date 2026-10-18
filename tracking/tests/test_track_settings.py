@@ -68,6 +68,7 @@ def test_config_paths_are_relative_to_file_not_caller(config, tmp_path, monkeypa
     assert settings["output_root"] == str(tmp_path / "exports")
     assert settings["tracker"] == "bytetrack.yaml"
     assert settings.get("cnn_threshold") is settings.get("max_frames") is None
+    assert settings["smooth_video"] is False
     assert not (tmp_path / "exports").exists()
 
 
@@ -75,6 +76,7 @@ def test_config_paths_are_relative_to_file_not_caller(config, tmp_path, monkeypa
     ("cnn_threshold", -.1), ("cnn_threshold", 1.1), ("cnn_threshold", float("nan")),
     ("conf", float("inf")), ("iou", -.1), ("conf", True), ("imgsz", 0), ("imgsz", 640.5),
     ("max_frames", 0), ("max_frames", -1), ("max_frames", True), ("preview", "false"),
+    ("smooth_video", "true"), ("smooth_video", 1),
     ("pixels_per_mm", 0), ("pixels_per_mm", float("inf")), ("measurement_reference_size", [0, 450]),
     ("measurement_reference_size", [800, True]), ("measurement_reference_size", [800]),
     ("water_policy", "skip"), ("weight_mode", "both"), ("video", -1), ("video", True),
@@ -96,6 +98,12 @@ def test_optional_threshold_and_limit(config, threshold):
 def test_camera_index_is_preserved(config):
     change(config, video=0)
     assert run_track.load_settings(config)["video"] == 0
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_optional_video_smoothing(config, enabled):
+    change(config, smooth_video=enabled)
+    assert run_track.load_settings(config)["smooth_video"] is enabled
 
 
 def test_unknown_nested_section_is_rejected(config):
@@ -200,5 +208,6 @@ def test_web_job_config_matches_real_tracking_contract(config, tmp_path, limit):
     assert settings["water_quality"] and settings["biometrics"]
     assert settings["water_policy"] == "report" and settings.get("max_frames") == limit
     assert settings["cnn_threshold"] == .03
+    assert settings["smooth_video"] is True
     assert not any(settings[name] for name in ("preview", "preview_only", "debug", "save_crops"))
     assert template.read_bytes() == original

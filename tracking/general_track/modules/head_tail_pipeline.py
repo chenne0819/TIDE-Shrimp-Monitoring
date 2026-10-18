@@ -98,7 +98,8 @@ class HeadTailShrimpAnalyzer:
         return records, debug_items
 
     def run(self, video, output_root="general_track/exports/run_track", tracker="bytetrack.yaml",
-            conf=0.6, iou=0.3, max_frames=None, preview=False, preview_only=False, debug=False, save_crops=False):
+            conf=0.6, iou=0.3, max_frames=None, preview=False, preview_only=False, debug=False, save_crops=False,
+            smooth_video=False):
         self.monitoring.reset()
         reset_obb_tracking(self.obb_model)
         self._shrimp_display_ids = {}
@@ -111,6 +112,7 @@ class HeadTailShrimpAnalyzer:
         output = None
         preview = preview or preview_only
         preview_smoothing = PreviewSmoothing(self.cnn_threshold)
+        video_smoothing = PreviewSmoothing(self.cnn_threshold) if smooth_video else None
         skipped_turbid = False
         try:
             fps = float(capture.get(cv2.CAP_PROP_FPS))
@@ -136,11 +138,15 @@ class HeadTailShrimpAnalyzer:
                     rows = self._detect(frame, tracker, conf, iou)
                     records, items = self._process_frame(frame, rows, frame_index, fps)
                     all_records.extend(records)
-                    annotated = visualization.render_frame(frame, records, items, self.monitoring)
+                    # Encoded output uses its own timeline, independent of inference speed
+                    # and the live preview clock. Raw records/crop labels stay unchanged.
+                    video_items = (video_smoothing.update(items, frame_index / fps)
+                                   if video_smoothing is not None and output is not None else items)
+                    annotated = visualization.render_frame(frame, records, video_items, self.monitoring)
                     if output is not None:
                         export_frame = annotated
                         if debug:
-                            export_frame = visualization.combine_preview(annotated, visualization.make_debug_view(items, frame_index))
+                            export_frame = visualization.combine_preview(annotated, visualization.make_debug_view(video_items, frame_index))
                             if debug_video_size is None:
                                 debug_video_size = visualization.debug_video_size(export_frame)
                             export_frame = visualization.letterbox(export_frame, debug_video_size)
