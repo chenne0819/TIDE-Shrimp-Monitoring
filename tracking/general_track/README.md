@@ -59,7 +59,7 @@ The old `modules/config.py` is removed. Feature modules do not read the TOML or 
 
 Runs save `result.mp4`, `detections.csv`, `per_shrimp.csv` and optional `classifier_crops/` under `output_root/<video>/<timestamp>/`. When the same path already exists, a numeric suffix prevents overwriting an earlier run. Monitoring appends its original fields, summaries and files.
 
-The web result reader remains compatible with the exported schema. The current web worker still sends removed CLI options, so its invocation must be migrated separately before end-to-end web inference can run. Neither web nor shared monitoring source is changed in this refactor.
+The web worker reads this template, resolves model and custom tracker paths relative to it, and writes a separate TOML for each job. It passes `--config`, supplies the uploaded video, output directory, frame limit and water policy, enables both monitoring models, and disables preview/debug/crop output. The shared template is not modified. The web result reader imports the exported schema.
 
 The [EMA tuning snapshot](../docs/ema-threshold-results.md) reports a candidate
 preview threshold of 0.14, not an applied default. Preview smoothing currently

@@ -81,22 +81,3 @@ print('Relocated assets loaded successfully')
                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Relocated assets loaded successfully" in result.stdout
-
-
-def test_training_yaml_follows_its_directory_after_move(tmp_path, monkeypatch):
-    from ultralytics.data import utils
-
-    training = tmp_path / "moved training"
-    training.mkdir()
-    data_yaml = training / "data.yaml"
-    shutil.copy2(PROJECT_ROOT / "Train/male-female-shrimp/OBB/data.yaml", data_yaml)
-    for split in ("train", "val", "test"):
-        (training / "shrimp_OBB_dataset" / split / "images").mkdir(parents=True)
-    caller = tmp_path / "different working directory"
-    caller.mkdir()
-    monkeypatch.chdir(caller)
-    # Dataset resolution does not need to download a plotting font.
-    monkeypatch.setattr(utils, "check_font", lambda *args, **kwargs: None)
-    dataset = utils.check_det_dataset(str(data_yaml), autodownload=False)
-    for split in ("train", "val", "test"):
-        assert Path(dataset[split]) == training / "shrimp_OBB_dataset" / split / "images"

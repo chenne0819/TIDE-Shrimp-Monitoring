@@ -1,6 +1,6 @@
 # FastAPI and the video worker
 
-Run these commands from **`web/backend/`**, using `web/.venv`. Tracking uses Python 3.14 in the repository-root `.venv`. The current worker still sends removed inference flags, so real video jobs require a worker-to-TOML migration before successful inference; the API/worker startup commands below do not perform that migration.
+Run these commands from **`web/backend/`**, using `web/.venv`. Tracking uses Python 3.14 in the repository-root `.venv`. The worker derives a per-job TOML from `tracking/general_track/config.toml`, enables water and biometric monitoring, and invokes the analyzer with `--config`. Compatible OBB/CNN weights must be supplied separately.
 
 ```powershell
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000

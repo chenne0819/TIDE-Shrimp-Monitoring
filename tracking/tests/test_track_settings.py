@@ -30,7 +30,28 @@ def change(path, **values):
 @pytest.fixture
 def config(tmp_path):
     path = tmp_path / "settings.toml"
-    path.write_text(run_track.DEFAULT_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    # Exercise a stable configuration independently of the editable sample.
+    path.write_text('''video = "input.mp4"
+obb_model = "obb.pt"
+classifier_model = "cnn.pt"
+tracker = "bytetrack.yaml"
+imgsz = 640
+conf = 0.3
+iou = 0.3
+water_quality = false
+biometrics = false
+water_model = "water.pth"
+biometrics_model_dir = "biometrics"
+water_policy = "stop"
+pixels_per_mm = 2.5
+measurement_reference_size = [800, 450]
+weight_mode = "length"
+output_root = "exports"
+preview = false
+preview_only = false
+debug = false
+save_crops = false
+''', encoding="utf-8")
     for name in ("input.mp4", "obb.pt", "cnn.pt"):
         (tmp_path / name).touch()
     change(path, video="input.mp4", obb_model="obb.pt", classifier_model="cnn.pt", output_root="exports")
@@ -149,3 +170,35 @@ def test_config_and_help_do_not_load_torch(config):
     code = "from general_track.run_track import load_settings; import sys; load_settings(sys.argv[1]); assert 'torch' not in sys.modules"
     result = subprocess.run([sys.executable, "-c", code, str(config)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("limit", [None, 4])
+def test_web_job_config_matches_real_tracking_contract(config, tmp_path, limit):
+    import importlib.util
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("analyzer_config", root / "web/backend/app/analyzer_config.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    template = tmp_path / "general_track/config.toml"
+    template.parent.mkdir()
+    template.write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
+    change(template, obb_model="../obb.pt", classifier_model="../cnn.pt", tracker="../tracker.yaml",
+           water_model=str(root / "tracking/model/water/logistic_regression_model.pth"),
+           biometrics_model_dir=str(root / "tracking/model/biometrics"),
+           preview_only=True, water_quality=False, biometrics=False, max_frames=2, cnn_threshold=.03)
+    (tmp_path / "tracker.yaml").write_text("tracker_type: bytetrack", encoding="utf-8")
+    original = template.read_bytes()
+    destination = tmp_path / "job 資料.toml"
+    module.write_job_config(tmp_path, tmp_path / "input.mp4", tmp_path / "job exports", destination,
+                            water_policy="report", max_frames=limit)
+    args = run_track.build_parser().parse_args(["--config", str(destination)])
+    settings = run_track.load_settings(args.config)
+    assert settings["video"] == str(tmp_path / "input.mp4")
+    assert settings["obb_model"] == str(tmp_path / "obb.pt")
+    assert settings["classifier_model"] == str(tmp_path / "cnn.pt")
+    assert settings["tracker"] == str(tmp_path / "tracker.yaml")
+    assert settings["water_quality"] and settings["biometrics"]
+    assert settings["water_policy"] == "report" and settings.get("max_frames") == limit
+    assert settings["cnn_threshold"] == .03
+    assert not any(settings[name] for name in ("preview", "preview_only", "debug", "save_crops"))
+    assert template.read_bytes() == original

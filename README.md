@@ -16,7 +16,7 @@ TIDE-Shrimp-Monitoring/
 └── web/        # Next.js frontend, FastAPI API/worker, PostgreSQL and AI assistant
 ```
 
-These are two parts of the same system. `tracking/` runs independently from Python. The web architecture delegates inference to a separate worker, outside HTTP requests. The current worker still sends legacy inference flags and must be migrated to the TOML entry before real web video analysis can run; see [tracking usage](tracking/general_track/README.md#outputs-and-external-callers).
+These are two parts of the same system. `tracking/` runs independently from Python. The web architecture delegates inference to a separate worker, outside HTTP requests. The worker creates a separate TOML configuration for each job and invokes the tracking entry with `--config`; see [tracking usage](tracking/general_track/README.md#outputs-and-external-callers).
 
 | Component | Included features | Documentation |
 | --- | --- | --- |
@@ -56,7 +56,7 @@ Requirements: Git (and Git LFS for inherited upstream LFS assets), Python 3.14 f
 .\scripts\start-local.ps1 -Service web
 ```
 
-Open [the web workspace](http://127.0.0.1:3000/dashboard), [the upload page](http://127.0.0.1:3000/upload), or [the API documentation](http://127.0.0.1:8000/docs). The [explicit demo](http://127.0.0.1:3000/dashboard?demo=1) uses synthetic measurements and does not include private recordings or extracted thumbnails. Standalone tracking is available; new web video jobs additionally require the worker invocation migration noted above, model assets and a running worker.
+Open [the web workspace](http://127.0.0.1:3000/dashboard), [the upload page](http://127.0.0.1:3000/upload), or [the API documentation](http://127.0.0.1:8000/docs). The [explicit demo](http://127.0.0.1:3000/dashboard?demo=1) uses synthetic measurements and does not include private recordings or extracted thumbnails. Standalone tracking and web video jobs use the same TOML entry. Real analysis requires compatible model assets and a running worker.
 
 AI is disabled by default. The `codex` provider uses an existing local Codex login for trusted local testing; the `openai` provider uses the official OpenAI Responses SDK and a separate server-side API key. See [AI configuration](web/docs/ai-analysis.md). No account session or API key is supplied by this repository.
 
@@ -67,7 +67,7 @@ AI is disabled by default. The `codex` provider uses an existing local Codex log
 - Water results describe image appearance (`clear` / `turbid`) from the first frame. They are not pH, dissolved oxygen or a complete water-quality measurement.
 - Width is an OBB short-edge proxy; length and weight are model estimates. The inherited reference is 800 × 450 at 2.5 pixels/mm. Recalibrate after changing the camera, distance, framing or geometry; resizing alone does not establish a physical scale.
 - The `run_track` entry retains head/tail tracking and classifier-based sex classification.
-- Tracking settings now use `tracking/general_track/config.toml`; the entry accepts only `--config` and `--help`. The current web worker still sends removed inference flags and requires a separate invocation update before real web analysis can run.
+- Tracking settings now use `tracking/general_track/config.toml`; the entry accepts only `--config` and `--help`. The web worker derives job configurations from that template, enables both monitoring models and saves results without opening a preview window.
 - Tracking IDs are local to a video. Comparisons across videos or dates do not establish the growth of the same individual shrimp.
 - Preview EMA changes only display labels. The [EMA tuning summary](tracking/docs/ema-threshold-results.md) records the six-video experiment; its candidate threshold was not applied to the live configuration.
 

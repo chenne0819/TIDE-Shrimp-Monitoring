@@ -207,7 +207,11 @@ export function RecordingDetail({ id, demo }: { id: string; demo: boolean }) {
               <div className="detail-status">
                 <StatusBadge status={current.status} />
                 <span>
-                  頭尾追蹤
+                  {current.mode === "head_tail"
+                    ? "頭尾追蹤"
+                    : current.mode === "predict"
+                      ? "單幀分析"
+                      : "個體追蹤"}
                 </span>
               </div>
             </div>
@@ -363,7 +367,7 @@ export function RecordingDetail({ id, demo }: { id: string; demo: boolean }) {
                                 <span className={`sex-label sex-${track.label.toLowerCase()}`}>
                                   {track.label.toLowerCase()}
                                 </span>
-                              ) : null}
+                              ) : "未判定"}
                             </td>
                             <td>{track.observations}</td>
                             <td>{formatNumber(track.length_mm)}</td>

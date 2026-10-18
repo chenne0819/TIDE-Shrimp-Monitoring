@@ -24,7 +24,7 @@ Set water_quality and biometrics independently in TOML. Both true enables both f
 | `measurement_reference_size` | Reference [width, height], without changing detector coordinates |
 | `weight_mode` | length, or length-width after validating the width proxy |
 
-The PowerShell wrapper accepts only -Config; it runs the same settings and does not override monitoring. The shared shrimp_monitoring APIs retain their original behavior. The web worker still uses the removed flags and must be migrated separately; its existing result reader can read the same exported schema.
+The PowerShell wrapper accepts only -Config; it runs the same settings and does not override monitoring. The shared shrimp_monitoring APIs retain their original behavior. The web worker enables both monitoring features in a per-job TOML and passes `--config`; its result reader imports the same exported schema.
 
 ## First-frame water classification
 

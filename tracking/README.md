@@ -73,7 +73,7 @@ model/
   assets-manifest.json                 # Included origins, filenames and hashes
 ```
 
-Supply the required OBB checkpoint and one compatible sex-classification checkpoint. Water classification uses the included checkpoint; biometrics loads all four included regressors, even in length-only weight mode. Enable these features with the TOML `water_quality` and `biometrics` booleans. The entry does not accept `--monitoring`. The web worker still uses that removed option and requires a separate migration.
+Supply the required OBB checkpoint and one compatible sex-classification checkpoint. Water classification uses the included checkpoint; biometrics loads all four included regressors, even in length-only weight mode. Enable these features with the TOML `water_quality` and `biometrics` booleans. The entry does not accept `--monitoring`. The web worker enables both features in an independent per-job TOML and invokes `--config`.
 
 | Entry point | Default models relative to `tracking/` |
 | --- | --- |
@@ -96,7 +96,7 @@ Use the repository-root inference environment and remain in `tracking/`. Edit [g
 
 The entry accepts only `--config` and `--help`; old inference flags are removed. Use an integer `video = 0` for a camera. Omit max_frames to process the full source. Preview and crops are TOML booleans. The optional Windows wrapper accepts `-Config` and does not automatically enable monitoring.
 
-The existing web worker needs a subsequent invocation migration from the removed flags to TOML. Result file schemas remain compatible. See the [module guide](general_track/README.md) for behavior and module responsibilities. The old `Train/` directory is not part of this working tree; tests that still reference it are legacy-test issues, not supported training entry points.
+The web worker uses a per-job TOML with absolute asset paths and saves the existing result file schemas. See the [module guide](general_track/README.md) for behavior and module responsibilities. The old `Train/` directory is not part of this working tree; training-only tests were retired with those removed entry points. Runtime configuration tests use independent fixtures rather than the editable sample TOML.
 
 
 ## Outputs

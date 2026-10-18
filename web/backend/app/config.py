@@ -44,7 +44,8 @@ class Settings:
         if not database_url:
             raise ValueError("DATABASE_URL 必須明確設定；請先建立專案 .env。")
         analyzer_root = app_path(os.getenv("ANALYZER_ROOT", "../tracking"))
-        candidates = [analyzer_root / ".venv/Scripts/python.exe", analyzer_root / ".venv/bin/python"]
+        candidates = [root / relative for root in (analyzer_root.parent, analyzer_root)
+                      for relative in (".venv/Scripts/python.exe", ".venv/bin/python")]
         default_python = next((path for path in candidates if path.is_file()), Path(sys.executable))
         return cls(
             database_url=database_url,
